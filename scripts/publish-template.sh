@@ -14,6 +14,8 @@ if ! git clone --quiet "$remote" "$work" 2>/dev/null; then
   git init --quiet -b main "$work"
   git -C "$work" remote add origin "$remote"
 fi
+# A repo created empty clones with no branch. Publish to main.
+git -C "$work" rev-parse --quiet --verify HEAD >/dev/null || git -C "$work" symbolic-ref HEAD refs/heads/main
 
 rsync -a --delete --exclude .git "$root/template/" "$work/"
 
