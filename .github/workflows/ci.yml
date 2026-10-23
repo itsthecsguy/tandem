@@ -1,5 +1,5 @@
-# Checks the app: types, tests and a build of the site. Firmware builds run in
-# the config template's own repo.
+# Checks the site and the helper: types, tests and a build of the site.
+# Firmware builds run in the config template's own repo.
 on: [push, pull_request]
 
 name: CI
@@ -16,7 +16,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            helper/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Helper
+        run: npm --prefix helper ci && npm --prefix helper run typecheck

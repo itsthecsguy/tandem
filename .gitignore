@@ -4,4 +4,4 @@ dist/
 *.log
 
 # Built by `npm run vendor` on install.
-server/vendor/zmk-studio-client.js
+helper/vendor/zmk-studio-client.js

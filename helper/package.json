@@ -1,0 +1,30 @@
+{
+  "name": "tandem-helper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Optional local helper for Tandem: finds the halves over USB and flashes them without prompts. macOS only.",
+  "license": "MIT",
+  "scripts": {
+    "start": "tsx index.ts",
+    "dev": "tsx watch index.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "vendor": "esbuild node_modules/@zmkfirmware/zmk-studio-ts-client/lib/index.js --bundle --platform=node --format=esm --target=node22 --outfile=vendor/zmk-studio-client.js",
+    "postinstall": "npm run vendor"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@zmkfirmware/zmk-studio-ts-client": "^0.0.18",
+    "esbuild": "^0.28.2",
+    "hono": "^4.13.13",
+    "plist": "^5.0.0",
+    "run-script-os": "^1.1.6",
+    "serialport": "^13.0.0",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/plist": "^3.0.5",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,103 +1,109 @@
 # Tandem
 
-Edit your Kinesis Advantage 360 Pro layout, build the firmware in your own GitHub Actions, and flash both halves. After a one-time setup, an update is: plug in both halves, click Update.
+Edit your Kinesis Advantage 360 Pro layout, build its firmware in your own GitHub Actions, and put it on both halves from your browser. After a one-time setup, an update is: plug in both halves, click Update.
 
-This repo holds two things. One is the Tandem app, which runs on your computer. The other is a ZMK config for the Advantage 360 Pro with Kinesis's default layout and Tandem already set up, so a copy of this repo builds Tandem firmware as soon as GitHub Actions runs.
+Tandem runs in the browser tab. Your layout lives in a GitHub repo you own, GitHub builds the firmware, and Chrome or Edge copies it onto the keyboard over USB. The site's only server code is a small Cloudflare Worker that finishes GitHub sign-in.
 
-This is a prototype. It has only been tried on macOS.
+This is a prototype.
 
-## Get started
+## Use it
 
-1. Fork this repo. GitHub won't make a fork of a public repo private, so if you want your layout private, use **Use this template** and create a private repo instead.
-2. If you forked, open your copy's Actions tab and turn workflows on. GitHub turns them off on new forks.
-3. Clone your copy and start Tandem:
+1. Open [tandemkb.com](https://tandemkb.com) in Chrome or Edge on a computer.
+2. Sign in with GitHub. Tandem asks for your public repos and their workflows, and for private repos only if you want one.
+3. Plug in both halves and let the browser open their ports.
+4. Choose where your layout lives:
+   - **A repo you have**, such as your fork of Kinesis's config. Tandem adds itself with one commit and keeps your keys as they are.
+   - **A new repo.** Tandem creates one on your account from its [config template](https://github.com/itsthecsguy/tandem-config), starting from Kinesis's default layout or the one on your keyboard. It can be private.
+5. Install Tandem firmware once. GitHub builds it, you put each half in update mode with its key combo, and you point the browser at the drive that appears. After that, halves restart into update mode by themselves.
 
-   ```bash
-   git clone https://github.com/YOUR-NAME/tandem
-   cd tandem
-   npm install
-   npm start
-   ```
-
-4. Open http://localhost:4317 and follow setup. When it asks where your layout lives, pick your copy. It's set up already, so Tandem goes straight to building firmware.
-
-Already have a config repo, such as a fork of Kinesis's [Adv360-Pro-ZMK](https://github.com/KinesisCorporation/Adv360-Pro-ZMK)? Clone this repo without forking it, run it the same way, and pick your repo in setup. Tandem adds itself with one commit and keeps your keys as they are. If you have no repo, setup can also create one for you.
-
-To get a newer Tandem into a fork, click **Sync fork** on GitHub, then `git pull`. The sync changes your firmware module too, so GitHub builds new firmware and Tandem offers to flash it. If Kinesis's default keymap changed upstream, the sync can conflict with your layout. Keep your version of `config/adv360.keymap`.
-
-## First run
-
-Setup is four full-screen steps.
-
-1. **GitHub.** Tandem uses your GitHub CLI login (`gh auth login`), or GitHub's device flow when `TANDEM_GITHUB_CLIENT_ID` names an OAuth app with device flow turned on. It needs the `repo` and `workflow` scopes. For the CLI, add the second one with `gh auth refresh -s workflow`.
-2. **Keyboard.** Plug in both halves. Tandem checks which firmware each half runs. If it's already Tandem firmware, setup skips the one-time flash, and newer Tandem firmware also names the repo it was built from so setup can offer that repo. You can also set up without the keyboard and flash later.
-3. **Layout.** Choose where the layout lives:
-   - **A repo you have**, such as your copy of this repo or your fork of Kinesis's config. If the repo doesn't have Tandem yet, Tandem makes one commit to the branch you pick and keeps your keymap's keys as they are.
-   - **A new repo.** Tandem copies Kinesis's current config into a new repo on your account, with Tandem already added. It's a regular repo, not a fork, because GitHub allows one fork per repo network per account. You can start from Kinesis's default layout or from the layout on your keyboard.
-4. **Firmware.** If the halves don't run Tandem firmware yet, Tandem builds it on GitHub and walks you through the key combo on each half, this one time. If they do, it offers a hands-free update when their build is behind the repo.
-
-The commit that adds Tandem to a repo changes:
-
-- `tandem/zmk-tandem/`: the firmware module (see below)
-- `.github/workflows/build.yml`: every `west build` includes the module, tagged with the commit's short SHA and the repo's name. A newer Tandem replaces an older version of these changes instead of adding a second copy.
-- `config/adv360.keymap`: Tandem's repeat behaviors, plus any keys that already repeat on tap-then-hold switched over to them
-
-This repo's own config already has that commit applied. A test checks that it stays that way.
-
-## Reading the layout from the keyboard
-
-Starting a new repo can use the layout that's on the keyboard now, so people who customized it with Kinesis's Clique app, and never had a repo, keep it.
-
-- **Tandem firmware** (protocol 2) answers a `keymap` command with the exact keymap file it was built from.
-- **Other ZMK firmware** with ZMK Studio, which is what Kinesis's Clique build has, is read over Studio's protocol. Studio keeps the keymap locked, so Tandem asks you to press the unlock key. On Kinesis's default layout that's Mod + Esc. Tandem then translates each binding back into keymap syntax and lists any it couldn't translate. The Studio client is bundled for Node with `npm run vendor`.
+Safari and Firefox can't talk to the keyboard. They can still edit the layout and build firmware, and an update ends with both files to copy onto the halves by hand.
 
 ## How an update runs
 
-1. **Commit.** Saving the layout commits `config/adv360.keymap` to your branch through the GitHub API. Your local clone isn't involved, so `git pull` before you commit anything yourself. If the branch changed on GitHub since Tandem loaded it, Tandem reloads instead of overwriting. Layers you didn't edit keep their spacing.
-2. **Build.** The push starts your workflow. Tandem follows the job for the firmware it wants (Clique or plain), then downloads its artifact. Builds already downloaded are reused. In this repo, the workflow only runs when `config/`, `tandem/`, `bin/` or the workflow itself changes, so changes to the app don't build firmware.
-3. **Flash.** Tandem finds both halves over USB. A half has the same USB serial number in its bootloader as in normal use, because both derive it from the chip ID, and that's how Tandem tells the two drives apart.
-   - A half running Tandem firmware is told to restart into its bootloader.
-   - A half on older firmware needs its key combo, and the app shows which keys to press. Combos only work while the other half is running, so those halves go one at a time.
-4. **Check.** Each half restarts and reports its build ID, which must match the commit.
+1. **Commit.** Saving commits the keymap to your branch through GitHub's API. If the branch changed on GitHub since Tandem loaded it, Tandem reloads instead of overwriting. Layers you didn't edit keep their spacing.
+2. **Build.** The push starts your workflow. Tandem follows the job for the firmware it wants (Clique or plain) and downloads its artifact. Downloads are kept in the browser, so going back to a build skips GitHub. If a commit's push started no build, as with a repo just made from the template, Tandem starts one.
+3. **Restart.** Right half first, then left. A half running Tandem firmware restarts into update mode when Tandem opens its serial port at 1200 baud. A half on other firmware needs its key combo, which Tandem shows on your layout.
+4. **Copy.** The half shows up as a drive named ADV360PRO. The first time, you choose it in the browser's folder picker. The browser can keep that permission, so later updates try the same drive before asking.
+5. **Check.** Each half restarts and must report the new build. A half that just got Tandem firmware has a new serial port, so the browser asks you to allow it once.
 
 ## What it adds to your keyboard
 
 **Hold for layer or modifier, tap twice to repeat.** Tap a key and it sends the key. Hold it and it switches layer, or acts as a modifier. Tap it and then press and hold, and the key repeats. These are two ZMK hold-tap behaviors, `&ltr` and `&mtr`, that Tandem keeps in a marked block of your keymap. You can put them on any key.
 
-**Updates without key presses.** The module adds a small USB serial port to each half. Opening it at 1200 baud reboots that half into its UF2 bootloader, the same thing `&bootloader` does. Writing `info` returns one JSON line with the half's role, build ID and repo. Writing `keymap` returns the keymap file the firmware was built from, which the module embeds at build time.
+**Updates without key presses.** The firmware module adds a small USB serial port to each half. Opening it at 1200 baud restarts that half into its UF2 bootloader, the same thing `&bootloader` does. Writing `info` returns one JSON line with the half's role, build ID and repo. Writing `keymap` returns the keymap file the firmware was built from, which the module embeds at build time.
+
+The commit that adds Tandem to an existing repo changes:
+
+- `tandem/zmk-tandem/`: the firmware module
+- `.github/workflows/build.yml`: every `west build` includes the module, tagged with the commit's short SHA and the repo's name. A newer Tandem replaces an older version of these changes instead of adding a second copy.
+- `config/adv360.keymap`: Tandem's repeat behaviors, plus any keys that already repeat on tap-then-hold switched over to them
+
+## Reading the layout from the keyboard
+
+Starting a new repo can use the layout that's on the keyboard now, so people who customized it with Kinesis's Clique app, and never had a repo, keep it.
+
+- **Tandem firmware** answers a `keymap` command with the exact keymap file it was built from.
+- **Other ZMK firmware** with ZMK Studio, which Kinesis's Clique build has, is read over Studio's protocol. Studio keeps the keymap locked, so Tandem asks you to press the unlock key, Mod + Esc on Kinesis's default layout. Tandem then translates each binding back into keymap syntax and lists any it couldn't translate.
+
+## The local helper
+
+`helper/` is an optional program for macOS that does the same work from your computer instead of the tab. It finds the halves over USB without asking for ports, copies firmware without the folder picker, and works with any browser. It signs in with the GitHub CLI (`gh auth login`), or with GitHub's device flow when `TANDEM_GITHUB_CLIENT_ID` names an OAuth app that has it turned on.
+
+```bash
+npm install
+npm --prefix helper install
+npm run helper
+```
+
+Then open http://localhost:4317. The helper serves the same UI, which sees the helper and uses it. It keeps its state in `~/Library/Application Support/Tandem`, or in `TANDEM_HOME` if you set it.
+
+## Develop
+
+```bash
+npm install
+npm run dev
+```
+
+Then open http://localhost:5317. Without the Worker there's no GitHub sign-in, so the dev server lets the page use the GitHub CLI's login instead. `npm run dev:helper` runs the UI against the helper.
+
+```bash
+npm test
+npm run typecheck
+npm --prefix helper run typecheck
+```
+
+The tests run the browser engine against an in-memory GitHub and a simulated keyboard, so they cover updates end to end.
+
+In dev, `?demo=` with `setup`, `auto`, `drive`, `firsttime`, `port`, `byhand` or `done` shows the update screens, and `repo` or `install` shows onboarding screens. Demo mode never sends changes.
+
+## Deploy
+
+The site is the `dist/` build served by the Worker in `worker/`, on Cloudflare's free tier.
+
+1. Register the domain and add it to Cloudflare.
+2. Create a GitHub OAuth app with the callback URL `https://tandemkb.com/auth/callback`. Put its client ID in `wrangler.toml` as `GITHUB_CLIENT_ID`.
+3. Run `npx wrangler secret put GITHUB_CLIENT_SECRET` and paste the app's client secret.
+4. Run `npm run build && npx wrangler deploy`, then add `tandemkb.com` as the Worker's custom domain in Cloudflare.
+
+The Worker only trades codes for its own origin and callback URL, keeps no tokens, and serves the site with a content security policy that allows scripts from the site alone.
+
+To update the config template, edit `template/` and run `scripts/publish-template.sh`, which commits it to [itsthecsguy/tandem-config](https://github.com/itsthecsguy/tandem-config).
 
 ## What's in this repo
 
-- `config/` Kinesis's config from [KinesisCorporation/Adv360-Pro-ZMK](https://github.com/KinesisCorporation/Adv360-Pro-ZMK) at V3.0, with the default layout. `config/adv360.keymap` is the file Tandem edits.
-- `tandem/zmk-tandem/` the ZMK module. Setup copies it into other repos.
-- `.github/workflows/build.yml` Kinesis's build workflow with Tandem added
-- `bin/get_version.sh` and `settings-reset.uf2` from Kinesis. The workflow uses the script. Flashing the reset file to a half clears its saved settings, including Bluetooth pairings.
-- `src/` web UI (React)
-- `server/` local helper: GitHub, keymap files, USB detection, flashing
-- `shared/` types, ZMK key codes and binding parsing
-- `test/` keymap and workflow tests
+- `src/` the UI, and `src/engine/` the browser engine: GitHub, builds, Web Serial and flashing
+- `shared/` code the browser and the helper share: keymap files, layout, setup, Studio translation and the GitHub client
+- `worker/` the Cloudflare Worker that serves the site and finishes sign-in
+- `template/` the config template: Kinesis's config at V3.0 with the default layout, the build workflow with Tandem added, and `tandem/zmk-tandem/`, the firmware module
+- `helper/` the optional local helper
+- `test/` tests, with the fake GitHub and keyboard in `test/fakes/`
 
-Kinesis's local Docker build isn't here, since it would build firmware without Tandem. Their repo also has the [key position chart](https://github.com/KinesisCorporation/Adv360-Pro-ZMK/blob/V3.0/assets/key-positions.png) and docs on editing the keymap by hand.
+## Next
 
-## Development
-
-```bash
-npm run dev        # helper with reload, UI on http://localhost:5317
-npm test
-npm run typecheck
-```
-
-In dev, `?demo=setup`, `?demo=auto`, `?demo=done`, `?demo=repo` and `?demo=install` show screens without a keyboard. Demo mode never sends changes.
-
-Tandem keeps its state, workspace and downloaded builds in `~/Library/Application Support/Tandem`. Set `TANDEM_HOME` to use another folder, for example to try setup from scratch without losing your own.
-
-## From prototype to product
-
-- **Sign-in.** Register a GitHub OAuth app with device flow turned on and ship its client ID. Device flow needs no client secret and no server.
-- **Repo creation.** Setup's new repos copy Kinesis's config from GitHub at the moment they're made. Copying this repo's `config/` instead would start everyone from the version Tandem tests.
+- **No folder picker.** In update mode, the bootloader also has a serial port. If it takes firmware over serial from the browser, the copy step needs no picker at all.
+- **Narrower access.** A GitHub App could be limited to the user's one config repo, instead of an OAuth app that can see all of them.
 - **Module.** Publish `zmk-tandem` as its own repo and reference it from `west.yml`, so updating it is a one-line change.
-- **Faster builds.** A prebuilt image with ZMK and the toolchain inside, published to GitHub's container registry, skips fetching ZMK on every run.
-- **Packaging.** Wrap the UI and helper in Tauri and ship it through GitHub Releases. The helper has to stay local because copying firmware to the keyboard needs USB access.
+- **Faster builds.** A prebuilt image with ZMK and the toolchain inside skips fetching ZMK on every run.
 
 ## License
 

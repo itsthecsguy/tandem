@@ -1,4 +1,9 @@
+// The optional local helper: the same API the browser engine has, served over
+// HTTP to the UI it also serves. It finds the halves over USB and copies
+// firmware itself, so updates need no port or drive prompts. macOS only.
+
 import { existsSync } from "node:fs";
+import { relative, resolve } from "node:path";
 
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -209,8 +214,12 @@ app.get("/api/events", (c) =>
   }),
 );
 
-if (process.env.NODE_ENV === "production" && existsSync("dist")) {
-  app.use("/*", serveStatic({ root: "./dist" }));
+// The site's build, made by `npm run build` in the repo root.
+const DIST = resolve(import.meta.dirname, "..", "dist");
+if (existsSync(DIST)) {
+  app.use("/*", serveStatic({ root: relative(process.cwd(), DIST) }));
+} else {
+  console.warn("No site build found. Run `npm run build` in the repo root, or use `npm run dev:helper` there.");
 }
 
 serve({ fetch: app.fetch, port: PORT, hostname: "127.0.0.1" }, () => {
