@@ -63,7 +63,7 @@ describe("writeKeymap", () => {
   });
 
   it("keeps the spacing of layers it didn't change", () => {
-    const stock = readFileSync(join(__dirname, "..", "config", "adv360.keymap"), "utf8");
+    const stock = readFileSync(join(__dirname, "..", "template", "config", "adv360.keymap"), "utf8");
     const keymap = toKeymap(parseKeymap(stock));
     keymap.layers[0].bindings[15] = "&ltr 2 Q";
     const out = writeKeymap(stock, keymap, rows);

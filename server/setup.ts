@@ -7,8 +7,8 @@ import { MODULE_PATH, type RepoFile, type RepoFiles, setupPlan as plan } from ".
 
 export { KEYMAP_PATH, MODULE_PATH, WORKFLOW_PATH, patchWorkflow, unpatchWorkflow } from "../shared/setup";
 
-/** The module in this repo, which setup copies into other repos. */
-export const MODULE_DIR = resolve(import.meta.dirname, "..", MODULE_PATH);
+/** The module in this repo's config template, which setup copies into other repos. */
+export const MODULE_DIR = resolve(import.meta.dirname, "..", "template", MODULE_PATH);
 
 export async function moduleFiles(): Promise<RepoFile[]> {
   const out: RepoFile[] = [];

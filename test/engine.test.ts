@@ -15,9 +15,9 @@ const read = (path: string) => readFileSync(join(__dirname, "..", path), "utf8")
 
 function tandemRepo(): Record<string, string> {
   const files: Record<string, string> = {
-    ".github/workflows/build.yml": read(".github/workflows/build.yml"),
-    "config/adv360.keymap": read("config/adv360.keymap"),
-    "config/info.json": read("config/info.json"),
+    ".github/workflows/build.yml": read("template/.github/workflows/build.yml"),
+    "config/adv360.keymap": read("template/config/adv360.keymap"),
+    "config/info.json": read("template/config/info.json"),
   };
   for (const f of MODULE_FILES) files[f.path] = f.content;
   return files;
@@ -27,7 +27,7 @@ function kinesisRepo(): Record<string, string> {
   return {
     ".github/workflows/build.yml": read("test/fixtures/build.yml"),
     "config/adv360.keymap": read("test/fixtures/adv360.keymap"),
-    "config/info.json": read("config/info.json"),
+    "config/info.json": read("template/config/info.json"),
   };
 }
 

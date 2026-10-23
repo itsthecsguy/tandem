@@ -1,11 +1,4 @@
-# Builds firmware when something that goes into it changes, not when only the
-# Tandem app does.
-on:
-  push:
-    paths: ["config/**", "tandem/**", "bin/**", ".github/workflows/build.yml"]
-  pull_request:
-    paths: ["config/**", "tandem/**", "bin/**", ".github/workflows/build.yml"]
-  workflow_dispatch:
+on: [push, pull_request, workflow_dispatch]
 
 name: Build
 

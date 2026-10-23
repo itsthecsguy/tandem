@@ -3,9 +3,9 @@
 
 import { MODULE_PATH, type RepoFile } from "../../shared/setup";
 
-const SOURCE = "/tandem/zmk-tandem/";
+const SOURCE = "/template/tandem/zmk-tandem/";
 
-const raw = import.meta.glob("/tandem/zmk-tandem/**/*", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+const raw = import.meta.glob("/template/tandem/zmk-tandem/**/*", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
 
 export const MODULE_FILES: RepoFile[] = Object.entries(raw)
   .map(([key, content]) => ({ path: `${MODULE_PATH}/${key.slice(SOURCE.length)}`, content }))

@@ -7,15 +7,15 @@ import { MODULE_FILES } from "../src/engine/module";
 
 const workflow = readFileSync(join(__dirname, "fixtures", "build.yml"), "utf8");
 
-describe("this repo", () => {
-  const read = (path: string) => readFileSync(join(__dirname, "..", path), "utf8");
+describe("the config template", () => {
+  const read = (path: string) => readFileSync(join(__dirname, "..", "template", path), "utf8");
 
-  // A fork of this repo should need no setup commit.
   it("bundles every file of the firmware module", () => {
     expect(MODULE_FILES.map((f) => f.path)).toContain("tandem/zmk-tandem/src/autoflash.c");
     expect(MODULE_FILES.map((f) => f.path)).toContain("tandem/zmk-tandem/zephyr/module.yml");
   });
 
+  // A repo made from the template should need no setup commit.
   it("has Tandem set up already", () => {
     const module = new Map(MODULE_FILES.map((f) => [f.path, read(f.path)]));
     const plan = setupPlan({ workflow: read(WORKFLOW_PATH), keymap: read(KEYMAP_PATH), info: read("config/info.json"), module }, MODULE_FILES);
