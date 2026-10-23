@@ -1,0 +1,46 @@
+{
+  "name": "tandem",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Edit your Kinesis Advantage 360 Pro layout, build its firmware in GitHub Actions, and flash both halves.",
+  "license": "MIT",
+  "author": "itsthecsguy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/itsthecsguy/tandem.git"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,magenta \"tsx watch server/index.ts\" \"vite\"",
+    "build": "vite build",
+    "start": "vite build && NODE_ENV=production tsx server/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "vendor": "esbuild node_modules/@zmkfirmware/zmk-studio-ts-client/lib/index.js --bundle --platform=node --format=esm --target=node22 --outfile=server/vendor/zmk-studio-client.js",
+    "postinstall": "npm run vendor"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@zmkfirmware/zmk-studio-ts-client": "^0.0.18",
+    "esbuild": "^0.28.2",
+    "hono": "^4.13.13",
+    "lucide-react": "^1.61.0",
+    "plist": "^5.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "run-script-os": "^1.1.6",
+    "serialport": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/plist": "^3.0.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

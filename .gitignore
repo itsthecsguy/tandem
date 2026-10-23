@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Built by `npm run vendor` on install.
+server/vendor/zmk-studio-client.js
+
+# Written by the build workflow on GitHub, never committed.
+tandem/build-id.conf
