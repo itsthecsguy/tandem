@@ -16,10 +16,18 @@ export interface JobView {
   steps: Record<StepId, { state: StepState; detail?: string }>;
   manual: { side: Side; reason: "no-autoflash" | "no-response" } | null;
   plugIn: Side | null;
+  /** The browser needs the user to choose this half's drive. */
+  drive: Side | null;
+  /** The browser needs the user to allow this half's new port. */
+  grantPort: Side | null;
+  /** This browser can't reach the keyboard: the files to copy by hand. */
+  manualFlash: { left: string; right: string } | null;
   logs: string[];
   /** The Actions run building this update. */
   runUrl: string | null;
   done: string | null;
+  /** Both halves reported the new build. False when nothing could ask them. */
+  checked: boolean;
   error: string | null;
   running: boolean;
   /** Any half needed hands this run, so this was a first-time setup. */
@@ -31,9 +39,13 @@ export function viewJob(job: JobSnapshot): JobView {
     steps: Object.fromEntries(STEP_ORDER.map((s) => [s, { state: "pending" }])) as JobView["steps"],
     manual: null,
     plugIn: null,
+    drive: null,
+    grantPort: null,
+    manualFlash: null,
     logs: [],
     runUrl: null,
     done: null,
+    checked: false,
     error: null,
     running: job.running,
     setup: false,
@@ -61,14 +73,39 @@ export function viewJob(job: JobSnapshot): JobView {
       case "plug-in":
         view.plugIn = e.side;
         break;
+      case "drive":
+        view.drive = e.side;
+        break;
+      case "drive-done":
+        if (view.drive === e.side) view.drive = null;
+        if (view.manual?.side === e.side) view.manual = null;
+        break;
+      case "grant-port":
+        view.grantPort = e.side;
+        break;
+      case "grant-port-done":
+        if (view.grantPort === e.side) view.grantPort = null;
+        break;
+      case "manual-flash":
+        view.manualFlash = { left: e.left, right: e.right };
+        break;
+      case "manual-flash-done":
+        view.manualFlash = null;
+        break;
       case "done":
         view.done = e.build;
+        view.checked = e.checked;
         view.manual = null;
+        view.drive = null;
+        view.grantPort = null;
         break;
       case "error":
         view.error = e.message;
         view.manual = null;
         view.plugIn = null;
+        view.drive = null;
+        view.grantPort = null;
+        view.manualFlash = null;
         for (const s of STEP_ORDER) if (view.steps[s].state === "active") view.steps[s].state = "error";
         break;
     }

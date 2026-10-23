@@ -1,84 +1,68 @@
 import { useEffect, useState } from "react";
 
-import type {
-  AppState,
-  BuildSettings,
-  DevicesStatus,
-  ImportedLayout,
-  JobEvent,
-  KeyboardInfo,
-  JobSnapshot,
-  Keymap,
-  RepoOption,
-  RepoRef,
-  Session,
-} from "../shared/types";
+import type { DevicesStatus, JobSnapshot } from "../shared/types";
+import { browserEngine } from "./engine/browser";
+import { helperEngine } from "./engine/helper";
+import type { Engine } from "./engine/types";
 
-const demo = import.meta.env.DEV && new URLSearchParams(location.search).has("demo");
+/** Set by initApi() before the app renders. */
+export let api: Engine;
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-  // Demo screens are for looking at. Never let them commit or flash anything.
-  if (demo && method !== "GET") throw new Error("Demo mode doesn't send changes.");
-  const res = await fetch(path, {
-    method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? `${method} ${path} failed`);
-  return data as T;
+/**
+ * Uses the local helper when it serves this page, and the browser engine
+ * everywhere else, including tandemkb.com. `?engine=helper` or
+ * `?engine=browser` picks one by hand.
+ */
+export async function initApi(): Promise<void> {
+  const forced = new URLSearchParams(location.search).get("engine");
+  const helper = forced ? forced === "helper" : await helperServesThisPage();
+  api = helper ? helperEngine() : browserEngine();
 }
 
-export const api = {
-  session: () => call<Session>("GET", "/api/session"),
-  useGh: () => call<Session>("POST", "/api/auth/gh"),
-  startDevice: () => call<{ userCode: string; url: string }>("POST", "/api/auth/device"),
-  deviceStatus: () => call<{ status: "pending" | "done" | "error"; error?: string } | null>("GET", "/api/auth/device"),
-  signOut: () => call<Session>("POST", "/api/auth/signout"),
-  repos: () => call<RepoOption[]>("GET", "/api/repos"),
-  branches: (owner: string, name: string) =>
-    call<{ branches: string[]; suggested: string }>("GET", `/api/repos/${owner}/${name}/branches`),
-  connect: (repo: RepoRef) => call<Session>("POST", "/api/repo", repo),
-  disconnect: () => call<Session>("POST", "/api/repo/disconnect"),
-  newRepo: (options: { name: string; private: boolean; fromKeyboard: boolean }) => call<Session>("POST", "/api/repo/new", options),
-  install: () => call<{ sha: string; session: Session }>("POST", "/api/repo/install"),
-  completeOnboarding: () => call<Session>("POST", "/api/onboarding/complete"),
-  restartOnboarding: () => call<Session>("POST", "/api/onboarding/restart"),
-  keyboard: () => call<KeyboardInfo>("GET", "/api/keyboard"),
-  readKeyboard: () => call<ImportedLayout>("POST", "/api/keyboard/read"),
-  state: () => call<AppState>("GET", "/api/state"),
-  saveKeymap: (keymap: Keymap) => call<AppState>("PUT", "/api/keymap", { keymap }),
-  saveSettings: (settings: BuildSettings) => call<AppState>("PUT", "/api/settings", settings),
-  update: (keymap?: Keymap) => call<{ id: string }>("POST", "/api/update", { keymap }),
-  cancel: () => call<{ ok: true }>("POST", "/api/update/cancel"),
-};
+async function helperServesThisPage(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/engine", { signal: AbortSignal.timeout(1500) });
+    if (!res.ok || !(res.headers.get("content-type") ?? "").includes("json")) return false;
+    return (await res.json()).engine === "helper";
+  } catch {
+    return false;
+  }
+}
 
-/** Live device status and update progress from the helper. */
+/** Live device status and update progress. */
 export function useLive() {
   const [devices, setDevices] = useState<DevicesStatus | null>(null);
   const [job, setJob] = useState<JobSnapshot | null>(null);
   const [connected, setConnected] = useState(false);
 
-  useEffect(() => {
-    const source = new EventSource("/api/events");
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
-    source.addEventListener("devices", (e) => setDevices(JSON.parse(e.data)));
-    source.addEventListener("job", (e) => setJob(JSON.parse(e.data)));
-    source.addEventListener("job-event", (e) => {
-      const event: JobEvent = JSON.parse(e.data);
-      setJob((prev) =>
-        prev
-          ? {
-              ...prev,
-              events: [...prev.events, event],
-              running: event.type === "done" || event.type === "error" ? false : prev.running,
-            }
-          : prev,
-      );
-    });
-    return () => source.close();
-  }, []);
+  useEffect(
+    () =>
+      api.subscribe((e) => {
+        switch (e.type) {
+          case "connected":
+            setConnected(e.connected);
+            break;
+          case "devices":
+            setDevices(e.devices);
+            break;
+          case "job":
+            setJob(e.job);
+            break;
+          case "job-event":
+            setJob((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    events: [...prev.events, e.event],
+                    running: e.event.type === "done" || e.event.type === "error" ? false : prev.running,
+                  }
+                : prev,
+            );
+            break;
+        }
+      }),
+    [],
+  );
 
   return { devices, job, connected };
 }

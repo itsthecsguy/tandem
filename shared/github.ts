@@ -145,12 +145,15 @@ export class GitHubApi {
     return commit.sha;
   }
 
+  /** The build for a commit: from its push, or started by hand for it. */
   async runFor(owner: string, repo: string, sha: string): Promise<WorkflowRun | null> {
-    const runs = await this.json<{ workflow_runs: WorkflowRun[] }>(
-      "GET",
-      `/repos/${owner}/${repo}/actions/runs?head_sha=${sha}&event=push&per_page=5`,
-    );
-    return runs.workflow_runs[0] ?? null;
+    const runs = await this.json<{ workflow_runs: WorkflowRun[] }>("GET", `/repos/${owner}/${repo}/actions/runs?head_sha=${sha}&per_page=10`);
+    return runs.workflow_runs.find((r) => r.event === "push" || r.event === "workflow_dispatch") ?? null;
+  }
+
+  /** Starts a workflow by hand, for a commit whose push didn't start one. */
+  async dispatch(owner: string, repo: string, workflowFile: string, ref: string): Promise<void> {
+    await this.json("POST", `/repos/${owner}/${repo}/actions/workflows/${workflowFile}/dispatches`, { ref });
   }
 
   async getRun(owner: string, repo: string, id: number): Promise<WorkflowRun> {
@@ -287,6 +290,7 @@ export interface WorkflowRun {
   conclusion: "success" | "failure" | "cancelled" | "skipped" | "timed_out" | null;
   html_url: string;
   head_sha: string;
+  event: string;
   name: string;
 }
 

@@ -1,4 +1,4 @@
-import { Check, Loader2, Plug } from "lucide-react";
+import { Check, Loader2, Plug, Usb } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { HalfStatus, KeyboardInfo, LayoutKey } from "../../shared/types";
@@ -35,6 +35,8 @@ export function KeyboardStep({ onContinue }: { onContinue: (info: KeyboardInfo |
   const { devices } = useLive();
   const [info, setInfo] = useState<KeyboardInfo | null>(null);
   const [checking, setChecking] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const browser = api.caps.engine === "browser";
 
   // Look again whenever a half connects, disconnects or changes firmware.
   const shape = devices
@@ -59,11 +61,42 @@ export function KeyboardStep({ onContinue }: { onContinue: (info: KeyboardInfo |
   const both = left?.mode === "app" && right?.mode === "app";
   const tandem = !!(left?.autoflash && right?.autoflash);
 
+  if (browser && !api.caps.keyboard) {
+    return (
+      <>
+        <h1>Your keyboard</h1>
+        <p className="lede">
+          This browser can't talk to the keyboard over USB. You can still edit your layout and build its firmware here, then copy the firmware
+          onto each half by hand. In Chrome or Edge, Tandem does that part for you.
+        </p>
+        <div className="ob__actions">
+          <span />
+          <button type="button" className="btn btn--primary btn--lg" onClick={() => onContinue(info)}>
+            Continue
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  const connect = async () => {
+    setError(null);
+    try {
+      await api.connectKeyboard();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  // In the browser, a half on standard firmware may have no port to show.
+  const ready = browser ? left?.mode === "app" || right?.mode === "app" : both;
+
   return (
     <>
       <h1>Connect your keyboard</h1>
       <p className="lede">
-        Plug both halves into this Mac with USB cables. Tandem checks which firmware they run and can read the layout that's on them now.
+        {browser
+          ? "Plug both halves into this computer with USB cables, then let the browser open their ports. Tandem checks which firmware they run and can read the layout that's on them now."
+          : "Plug both halves into this Mac with USB cables. Tandem checks which firmware they run and can read the layout that's on them now."}
       </p>
 
       <div className="half-cards">
@@ -90,11 +123,24 @@ export function KeyboardStep({ onContinue }: { onContinue: (info: KeyboardInfo |
         <p className="hint ob__status">Waiting for {left?.mode === "app" ? "the right half" : right?.mode === "app" ? "the left half" : "both halves"}.</p>
       )}
 
+      {browser && devices?.needsAccess && (
+        <div className="connect-ports">
+          <button type="button" className="btn" onClick={connect}>
+            <Usb size={15} /> Connect keyboard
+          </button>
+          <p className="hint">
+            Pick an Adv360 port and click Connect. The left half has two, so you may be asked twice. A half that runs standard firmware may not
+            show up until Tandem firmware is on it, and that's fine.
+          </p>
+        </div>
+      )}
+      {error && <p className="callout callout--err">{error}</p>}
+
       <div className="ob__actions">
         <button type="button" className="btn btn--ghost" onClick={() => onContinue(info)}>
           Set up without the keyboard
         </button>
-        <button type="button" className="btn btn--primary btn--lg" disabled={!both} onClick={() => onContinue(info)}>
+        <button type="button" className="btn btn--primary btn--lg" disabled={!ready} onClick={() => onContinue(info)}>
           Continue
         </button>
       </div>

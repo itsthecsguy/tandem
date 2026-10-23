@@ -113,7 +113,9 @@ export async function session(): Promise<Session> {
     login: null,
     source: null,
     missingScopes: [],
+    privateRepos: false,
     deviceFlow: !!CLIENT_ID,
+    oauth: false,
     ghLogin,
     repo: null,
     setup: null,
@@ -132,6 +134,7 @@ export async function session(): Promise<Session> {
 
   const signedIn = { ...base, signedIn: true, login: who.login, source: auth.source };
   signedIn.missingScopes = REQUIRED_SCOPES.filter((sc) => !who.scopes.includes(sc));
+  signedIn.privateRepos = who.scopes.includes("repo");
   if (!s.repo) return signedIn;
 
   const repo = s.repo;

@@ -275,7 +275,7 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
 
         <div className="topbar__right">
           <ThemeMenu />
-          {devices && left && right && <KeyboardStatus devices={devices} left={left} right={right} />}
+          {api.caps.keyboard && devices && left && right && <KeyboardStatus devices={devices} left={left} right={right} />}
           {dirty && (
             <button type="button" className="btn btn--ghost btn--icon" onClick={() => setDraft(state.keymap)} title="Discard changes" aria-label="Discard changes">
               <RotateCcw size={15} />
@@ -290,7 +290,7 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
         </div>
       </header>
 
-      {!connected && <div className="banner banner--err">Can't reach the Tandem helper. Start it with npm run dev.</div>}
+      {!connected && api.caps.engine === "helper" && <div className="banner banner--err">Can't reach the Tandem helper. Start it with npm run helper.</div>}
       {connected && needsSetup && !running && (
         <div className="banner">
           <span>
@@ -407,7 +407,15 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
       )}
 
       {sheetOpen && view && (
-        <UpdateSheet view={view} keymap={draft} layout={state.layout} onCancel={() => api.cancel()} onClose={() => setSheetOpen(false)} onRetry={update} />
+        <UpdateSheet
+          view={view}
+          keymap={draft}
+          layout={state.layout}
+          onAct={(a) => api.act(a).catch((e: Error) => setError(e.message))}
+          onCancel={() => api.cancel()}
+          onClose={() => setSheetOpen(false)}
+          onRetry={update}
+        />
       )}
     </div>
   );

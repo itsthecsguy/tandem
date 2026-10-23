@@ -28,8 +28,9 @@ function CopyCommand({ command }: { command: string }) {
 
 export function SignInStep({ session, onSession }: { session: Session; onSession: (s: Session) => void }) {
   const [code, setCode] = useState<{ userCode: string; url: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(session.signInError ?? null);
   const [busy, setBusy] = useState(false);
+  const browser = api.caps.engine === "browser";
 
   useEffect(() => {
     if (!code) return;
@@ -47,6 +48,18 @@ export function SignInStep({ session, onSession }: { session: Session; onSession
     return () => clearInterval(timer);
   }, [code, onSession]);
 
+  // Leaves the page for GitHub, so it only comes back here on failure.
+  const signIn = async (privateRepos: boolean) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.signIn({ privateRepos });
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
   if (session.signedIn && session.missingScopes.length) {
     return (
       <>
@@ -60,39 +73,52 @@ export function SignInStep({ session, onSession }: { session: Session; onSession
             <p className="prose">Run this in Terminal and approve it in your browser:</p>
             <CopyCommand command={`gh auth refresh -s ${session.missingScopes.join(",")}`} />
           </div>
+        ) : session.source === "oauth" ? (
+          <p className="prose">Sign in again and approve it on GitHub.</p>
         ) : (
           <p className="prose">Sign out and sign in again to grant it.</p>
         )}
+        {error && <p className="callout callout--err">{error}</p>}
         <div className="ob__actions">
           <button type="button" className="btn btn--ghost" onClick={async () => onSession(await api.signOut())}>
             Sign out
           </button>
-          <button
-            type="button"
-            className="btn btn--primary btn--lg"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              try {
-                onSession(await api.session());
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            {busy ? "Checking…" : "Check again"}
-          </button>
+          {session.source === "oauth" ? (
+            <button type="button" className="btn btn--primary btn--lg" disabled={busy} onClick={() => signIn(session.privateRepos)}>
+              {busy ? "Opening GitHub…" : "Sign in again"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--primary btn--lg"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  onSession(await api.session());
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? "Checking…" : "Check again"}
+            </button>
+          )}
         </div>
       </>
     );
   }
 
+  const oauth = browser && session.oauth;
+  const device = !browser && session.deviceFlow;
+
   return (
     <>
       <h1>Sign in with GitHub</h1>
       <p className="lede">
-        Your layout lives in a GitHub repo you own, and GitHub Actions builds the firmware. Tandem has no servers of its own. Only
-        copying firmware to the keyboard runs on this Mac.
+        {browser
+          ? "Your layout lives in a GitHub repo you own, and GitHub Actions builds the firmware. Tandem runs in this browser tab and keeps your GitHub sign-in here, not on a server."
+          : "Your layout lives in a GitHub repo you own, and GitHub Actions builds the firmware. Tandem has no servers of its own. Only copying firmware to the keyboard runs on this Mac."}
       </p>
 
       {code ? (
@@ -108,7 +134,15 @@ export function SignInStep({ session, onSession }: { session: Session; onSession
         </div>
       ) : (
         <div className="ob__choices">
-          {session.deviceFlow && (
+          {oauth && (
+            <>
+              <button type="button" className="btn btn--primary btn--lg" disabled={busy} onClick={() => signIn(false)}>
+                <GitHubMark /> {busy ? "Opening GitHub…" : "Sign in with GitHub"}
+              </button>
+              <p className="hint">Tandem asks for your public repos and their workflows. You can allow private repos later.</p>
+            </>
+          )}
+          {device && (
             <button
               type="button"
               className="btn btn--primary btn--lg"
@@ -127,7 +161,7 @@ export function SignInStep({ session, onSession }: { session: Session; onSession
           {session.ghLogin && (
             <button
               type="button"
-              className={`btn btn--lg${session.deviceFlow ? "" : " btn--primary"}`}
+              className={`btn btn--lg${oauth || device ? "" : " btn--primary"}`}
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
@@ -144,10 +178,19 @@ export function SignInStep({ session, onSession }: { session: Session; onSession
               <small>with your GitHub CLI login</small>
             </button>
           )}
-          {!session.deviceFlow && !session.ghLogin && (
+          {!oauth && !device && !session.ghLogin && (
             <p className="callout">
-              Sign in with the GitHub CLI first (<code>gh auth login</code>), or start Tandem with <code>TANDEM_GITHUB_CLIENT_ID</code> set to
-              an OAuth app that has device flow turned on.
+              {browser ? (
+                <>
+                  GitHub sign-in isn't set up on this server. To try Tandem locally, sign in with the GitHub CLI (<code>gh auth login</code>) and
+                  reload, or run the local helper.
+                </>
+              ) : (
+                <>
+                  Sign in with the GitHub CLI first (<code>gh auth login</code>), or start Tandem with <code>TANDEM_GITHUB_CLIENT_ID</code> set to
+                  an OAuth app that has device flow turned on.
+                </>
+              )}
             </p>
           )}
         </div>

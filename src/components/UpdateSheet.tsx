@@ -1,6 +1,6 @@
-import { ArrowUpRight, Check, Circle, Loader2, Minus, Plug, X } from "lucide-react";
+import { ArrowUpRight, Check, Circle, Download, HardDrive, Loader2, Minus, Plug, Usb, X } from "lucide-react";
 
-import type { Keymap, LayoutKey, Side, StepState } from "../../shared/types";
+import type { JobAction, Keymap, LayoutKey, Side, StepState } from "../../shared/types";
 import { bootloaderCombo } from "../lib/guide";
 import { type JobView, STEP_ORDER, STEP_TITLES } from "../lib/job";
 import { GitHubMark } from "./GitHubMark";
@@ -25,16 +25,133 @@ function sideName(side: Side) {
   return side === "left" ? "left" : "right";
 }
 
+function DriveButton({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
+  return (
+    <div className="drive-pick">
+      <button type="button" className="btn btn--primary" onClick={() => onAct({ type: "pick-drive", side })}>
+        <HardDrive size={15} /> Choose ADV360PRO
+      </button>
+      <p className="hint">
+        In the window that opens, select the drive named ADV360PRO, click Select, then allow Tandem to edit files. You don't pick a file.
+        Tandem writes the firmware itself.
+      </p>
+    </div>
+  );
+}
+
+/** The browser can't see the drive until the user points at it. */
+function DrivePrompt({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
+  return (
+    <div className="guide">
+      <div className="guide__head">
+        <span className="guide__badge">Your turn</span>
+        <h3>Choose the {sideName(side)} half's drive</h3>
+        <p>The {sideName(side)} half is in update mode and shows up as a drive. Point Tandem at it, and it copies the firmware.</p>
+      </div>
+      <DriveButton side={side} onAct={onAct} />
+    </div>
+  );
+}
+
+function GrantPortPrompt({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
+  return (
+    <div className="guide">
+      <div className="guide__head">
+        <span className="guide__badge">One-time step</span>
+        <h3>Allow the {sideName(side)} half's new port</h3>
+        <p>
+          The {sideName(side)} half now runs Tandem firmware, which adds a port this browser hasn't been allowed to open yet. Allow it so Tandem
+          can check the update. Later updates won't ask again.
+        </p>
+      </div>
+      <div className="drive-pick">
+        <button type="button" className="btn btn--primary" onClick={() => onAct({ type: "grant-port", side })}>
+          <Usb size={15} /> Allow port
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ManualFlashGuide({
+  files,
+  keymap,
+  layout,
+  onAct,
+}: {
+  files: { left: string; right: string };
+  keymap: Keymap;
+  layout: LayoutKey[];
+  onAct: (a: JobAction) => void;
+}) {
+  const right = bootloaderCombo("right", keymap, layout);
+  return (
+    <div className="guide">
+      <div className="guide__head">
+        <span className="guide__badge">By hand</span>
+        <h3>Copy the firmware onto each half</h3>
+        <p>This browser can't reach the keyboard, so copy the two files yourself. In Chrome or Edge, Tandem does this for you.</p>
+      </div>
+      <div className="manual-files">
+        <a className="btn" href={files.right} download="right.uf2">
+          <Download size={15} /> right.uf2
+        </a>
+        <a className="btn" href={files.left} download="left.uf2">
+          <Download size={15} /> left.uf2
+        </a>
+      </div>
+      <div className={`guide__body${right ? "" : " guide__body--single"}`}>
+        {right && (
+          <div className="guide__board">
+            <Keyboard
+              layout={layout}
+              bindings={keymap.layers[0].bindings}
+              layerNames={keymap.layers.map((l) => l.name)}
+              highlight={[right.hold, right.press]}
+              labels={{ [right.hold]: "1", [right.press]: "2" }}
+              compact
+            />
+          </div>
+        )}
+        <ol className="guide__steps">
+          <li>
+            Put the right half in update mode.{" "}
+            {right ? (
+              <>
+                Hold the <strong>{right.layerName}</strong> key <span className="num">1</span> and press <span className="num">2</span>, or
+                double-click its reset button.
+              </>
+            ) : (
+              "Double-click its reset button."
+            )}{" "}
+            A drive named ADV360PRO appears.
+          </li>
+          <li>Drag right.uf2 onto ADV360PRO. The half restarts when it's done.</li>
+          <li>Do the same with the left half and left.uf2. Double-click its reset button if you don't know its key combo.</li>
+        </ol>
+      </div>
+      <div className="drive-pick">
+        <button type="button" className="btn btn--primary" onClick={() => onAct({ type: "manual-flash-done" })}>
+          <Check size={15} /> I've copied both
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ManualGuide({
   side,
   reason,
   keymap,
   layout,
+  onPickDrive,
 }: {
   side: Side;
   reason: "no-autoflash" | "no-response";
   keymap: Keymap;
   layout: LayoutKey[];
+  /** In the browser, the user points Tandem at the drive once it appears. */
+  onPickDrive?: (a: JobAction) => void;
 }) {
   const combo = bootloaderCombo(side, keymap, layout);
 
@@ -76,9 +193,13 @@ function ManualGuide({
           </li>
         </ol>
       </div>
-      <p className="guide__wait">
-        <Loader2 size={14} className="spin" /> Tandem continues as soon as the half shows up as a drive.
-      </p>
+      {onPickDrive ? (
+        <DriveButton side={side} onAct={onPickDrive} />
+      ) : (
+        <p className="guide__wait">
+          <Loader2 size={14} className="spin" /> Tandem continues as soon as the half shows up as a drive.
+        </p>
+      )}
     </div>
   );
 }
@@ -87,13 +208,15 @@ interface Props {
   view: JobView;
   keymap: Keymap;
   layout: LayoutKey[];
+  onAct: (a: JobAction) => void;
   onCancel: () => void;
   onClose: () => void;
   onRetry: () => void;
 }
 
 /** Progress of an update: the steps, and any guide or notice the user needs. */
-export function UpdateProgress({ view, keymap, layout }: { view: JobView; keymap: Keymap; layout: LayoutKey[] }) {
+export function UpdateProgress({ view, keymap, layout, onAct }: { view: JobView; keymap: Keymap; layout: LayoutKey[]; onAct: (a: JobAction) => void }) {
+  const driveWithCombo = view.drive && view.manual?.side === view.drive;
   return (
     <>
       <ol className="steps">
@@ -124,13 +247,32 @@ export function UpdateProgress({ view, keymap, layout }: { view: JobView; keymap
         </div>
       )}
 
-      {view.manual && <ManualGuide side={view.manual.side} reason={view.manual.reason} keymap={keymap} layout={layout} />}
+      {view.manual && (
+        <ManualGuide
+          side={view.manual.side}
+          reason={view.manual.reason}
+          keymap={keymap}
+          layout={layout}
+          onPickDrive={driveWithCombo ? onAct : undefined}
+        />
+      )}
+      {view.drive && !driveWithCombo && <DrivePrompt side={view.drive} onAct={onAct} />}
+      {view.grantPort && <GrantPortPrompt side={view.grantPort} onAct={onAct} />}
+      {view.manualFlash && <ManualFlashGuide files={view.manualFlash} keymap={keymap} layout={layout} onAct={onAct} />}
 
       {view.done && (
         <div className="notice notice--ok">
           <Check size={16} />
           <span>
-            Both halves are running build <code>{view.done}</code>.
+            {view.checked ? (
+              <>
+                Both halves are running build <code>{view.done}</code>.
+              </>
+            ) : (
+              <>
+                Build <code>{view.done}</code> is on both halves. This browser couldn't ask them to confirm it.
+              </>
+            )}
             {view.setup && " Automatic updates are set up. Next time, connect both halves and click Update."}
           </span>
         </div>
@@ -152,7 +294,7 @@ export function updateHeading(view: JobView): string {
   return view.setup ? "Setting up automatic updates" : "Updating your keyboard";
 }
 
-export function UpdateSheet({ view, keymap, layout, onCancel, onClose, onRetry }: Props) {
+export function UpdateSheet({ view, keymap, layout, onAct, onCancel, onClose, onRetry }: Props) {
   return (
     <div className="scrim" role="presentation">
       <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
@@ -165,7 +307,7 @@ export function UpdateSheet({ view, keymap, layout, onCancel, onClose, onRetry }
           )}
         </header>
 
-        <UpdateProgress view={view} keymap={keymap} layout={layout} />
+        <UpdateProgress view={view} keymap={keymap} layout={layout} onAct={onAct} />
 
         <footer className="sheet__foot">
           {view.running ? (

@@ -11,9 +11,10 @@
     "url": "https://github.com/itsthecsguy/tandem.git"
   },
   "scripts": {
-    "dev": "concurrently -k -n server,web -c blue,magenta \"tsx watch server/index.ts\" \"vite\"",
+    "dev": "vite",
+    "dev:helper": "concurrently -k -n helper,web -c blue,magenta \"tsx watch server/index.ts\" \"TANDEM_HELPER=1 vite\"",
     "build": "vite build",
-    "start": "vite build && NODE_ENV=production tsx server/index.ts",
+    "helper": "vite build && NODE_ENV=production tsx server/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
     "vendor": "esbuild node_modules/@zmkfirmware/zmk-studio-ts-client/lib/index.js --bundle --platform=node --format=esm --target=node22 --outfile=server/vendor/zmk-studio-client.js",
@@ -23,6 +24,7 @@
     "@hono/node-server": "^2.1.5",
     "@zmkfirmware/zmk-studio-ts-client": "^0.0.18",
     "esbuild": "^0.28.2",
+    "fflate": "^0.8.2",
     "hono": "^4.13.13",
     "lucide-react": "^1.61.0",
     "plist": "^5.0.0",

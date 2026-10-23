@@ -75,7 +75,7 @@ export function startUpdate(keymap?: Keymap): Job {
       }
 
       await flashKeyboard(build, emit, abort.signal);
-      emit({ type: "done", build: build.id });
+      emit({ type: "done", build: build.id, checked: true });
     } catch (err) {
       const message = abort.signal.aborted
         ? "You cancelled the update. Any half left in update mode stays there until you update again or press its reset button."

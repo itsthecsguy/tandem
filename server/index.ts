@@ -34,6 +34,9 @@ const app = new Hono();
 
 app.onError((err, c) => c.json({ error: err.message }, 500));
 
+// The UI asks this to learn that a helper serves it, not tandemkb.com.
+app.get("/api/engine", (c) => c.json({ engine: "helper" }));
+
 // Sign-in
 
 app.get("/api/session", async (c) => c.json(await session()));

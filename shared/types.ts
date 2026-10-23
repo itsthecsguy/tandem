@@ -1,4 +1,4 @@
-// Types shared by the helper server and the web UI.
+// Types shared by the web UI, the browser engine and the helper.
 
 export interface LayoutKey {
   index: number;
@@ -59,17 +59,23 @@ export interface SetupStatus {
 export interface Session {
   signedIn: boolean;
   login: string | null;
-  source: "device" | "gh" | null;
+  source: "device" | "gh" | "oauth" | null;
   /** Token scopes Tandem needs but doesn't have. */
   missingScopes: string[];
-  /** GitHub sign-in through the device flow is configured. */
+  /** The token can see and change private repos. */
+  privateRepos: boolean;
+  /** GitHub sign-in through the device flow is configured (helper). */
   deviceFlow: boolean;
+  /** GitHub sign-in through this site's OAuth app is configured (browser). */
+  oauth: boolean;
   /** The GitHub CLI is signed in as this account. */
   ghLogin: string | null;
   repo: (RepoRef & { url: string; head: string }) | null;
   setup: SetupStatus | null;
   /** Finished onboarding, including the first flash. */
   onboarded: boolean;
+  /** Why the last sign-in on GitHub didn't finish, shown once. */
+  signInError?: string;
 }
 
 /** What setup found on the connected keyboard. */
@@ -153,6 +159,8 @@ export interface DevicesStatus {
   right: HalfStatus;
   /** Bootloader drives whose half we couldn't identify yet. */
   unknownBootloaders: { volume: string; serial: string | null }[];
+  /** The browser needs the user's OK before it can see a half's port. */
+  needsAccess: boolean;
   scannedAt: string;
 }
 
@@ -166,8 +174,23 @@ export type JobEvent =
   | { type: "manual"; side: Side; reason: "no-autoflash" | "no-response" }
   | { type: "manual-done"; side: Side }
   | { type: "plug-in"; side: Side }
-  | { type: "done"; build: string }
+  /** The browser needs the user to choose this half's update drive. */
+  | { type: "drive"; side: Side }
+  | { type: "drive-done"; side: Side }
+  /** The half came back with a port the browser hasn't been allowed to open yet. */
+  | { type: "grant-port"; side: Side }
+  | { type: "grant-port-done"; side: Side }
+  /** This browser can't reach the keyboard: download both files and copy them by hand. */
+  | { type: "manual-flash"; left: string; right: string }
+  | { type: "manual-flash-done" }
+  | { type: "done"; build: string; checked: boolean }
   | { type: "error"; message: string };
+
+/** The user's answer to something an update asked for. */
+export type JobAction =
+  | { type: "pick-drive"; side: Side }
+  | { type: "grant-port"; side: Side }
+  | { type: "manual-flash-done" };
 
 export interface JobSnapshot {
   id: string;

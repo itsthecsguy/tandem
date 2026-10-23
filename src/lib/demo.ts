@@ -37,7 +37,7 @@ const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
       { type: "step", step: "flash-right", state: "done", detail: "Running 3f9c2ab" },
       { type: "step", step: "flash-left", state: "done", detail: "Running 3f9c2ab" },
       { type: "step", step: "verify", state: "done", detail: "Both halves run 3f9c2ab" },
-      { type: "done", build: "3f9c2ab" },
+      { type: "done", build: "3f9c2ab", checked: true },
     ],
   },
 };
@@ -47,7 +47,9 @@ const signedIn: Session = {
   login: "octocat",
   source: "gh",
   missingScopes: [],
+  privateRepos: true,
   deviceFlow: false,
+  oauth: false,
   ghLogin: "octocat",
   repo: null,
   setup: null,

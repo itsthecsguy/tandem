@@ -63,7 +63,7 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
             : "Tandem builds your firmware on GitHub and updates both halves. No key presses needed."}
         </p>
         <div className="ob__progress">
-          <UpdateProgress view={view} keymap={state.keymap} layout={state.layout} />
+          <UpdateProgress view={view} keymap={state.keymap} layout={state.layout} onAct={(a) => api.act(a).catch((e: Error) => setError(e.message))} />
         </div>
         {error && <p className="callout callout--err">{error}</p>}
         <div className="ob__actions">
@@ -126,6 +126,35 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
           </button>
           <button type="button" className="btn btn--primary btn--lg" onClick={start}>
             Update now
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  if (!api.caps.flash) {
+    return (
+      <>
+        <h1>Install Tandem firmware</h1>
+        <p className="lede">
+          This browser can't reach the keyboard, so an update here ends with you copying two files. In Chrome or Edge, Tandem copies them for
+          you.
+        </p>
+        <ol className="ob__plan">
+          <li>
+            <strong>GitHub builds your firmware.</strong> About 3 minutes, from your repo's latest commit.
+          </li>
+          <li>
+            <strong>You copy it onto each half.</strong> Tandem gives you both files and shows how to put each half in update mode.
+          </li>
+        </ol>
+        {error && <p className="callout callout--err">{error}</p>}
+        <div className="ob__actions">
+          <button type="button" className="btn btn--ghost" onClick={finish} disabled={busy}>
+            Do this later
+          </button>
+          <button type="button" className="btn btn--primary btn--lg" onClick={start}>
+            Start
           </button>
         </div>
       </>

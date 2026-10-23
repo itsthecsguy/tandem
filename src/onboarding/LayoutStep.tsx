@@ -77,7 +77,7 @@ function Choose({ keyboard, onView, onSession }: { keyboard: KeyboardInfo | null
             <Plus size={20} />
           </span>
           <strong>Start a new repo</strong>
-          <span>Tandem creates a repo with Kinesis's config. Start from the layout on your keyboard, or from Kinesis's default.</span>
+          <span>Tandem creates a repo with Kinesis's config and Tandem set up. Start from the layout on your keyboard, or from Kinesis's default.</span>
         </button>
       </div>
       {error && <p className="callout callout--err">{error}</p>}
@@ -87,7 +87,29 @@ function Choose({ keyboard, onView, onSession }: { keyboard: KeyboardInfo | null
 
 // Existing: pick a repo and branch.
 
-function Existing({ onBack, onSession }: { onBack: () => void; onSession: (s: Session) => void }) {
+/** Browser sign-in starts with public repos only. Ask GitHub for private ones on request. */
+function PrivateRepos({ session, children }: { session: Session; children: string }) {
+  const [busy, setBusy] = useState(false);
+  if (session.privateRepos || session.source !== "oauth") return null;
+  return (
+    <p className="hint">
+      {children}{" "}
+      <button
+        type="button"
+        className="link"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          await api.signIn({ privateRepos: true }).catch(() => setBusy(false));
+        }}
+      >
+        Allow private repos
+      </button>
+    </p>
+  );
+}
+
+function Existing({ session, onBack, onSession }: { session: Session; onBack: () => void; onSession: (s: Session) => void }) {
   const [repos, setRepos] = useState<RepoOption[] | null>(null);
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<RepoOption | null>(null);
@@ -127,6 +149,8 @@ function Existing({ onBack, onSession }: { onBack: () => void; onSession: (s: Se
         <Search size={15} />
         <input placeholder="Filter repos" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
+
+      <PrivateRepos session={session}>Don't see a private repo?</PrivateRepos>
 
       <div className="repo-list" role="radiogroup" aria-label="Repositories">
         {!repos && !error && (
@@ -260,7 +284,17 @@ function Preview({ imported }: { imported: ImportedLayout }) {
   );
 }
 
-function NewRepo({ keyboard, onBack, onSession }: { keyboard: KeyboardInfo | null; onBack: () => void; onSession: (s: Session) => void }) {
+function NewRepo({
+  session,
+  keyboard,
+  onBack,
+  onSession,
+}: {
+  session: Session;
+  keyboard: KeyboardInfo | null;
+  onBack: () => void;
+  onSession: (s: Session) => void;
+}) {
   const canRead = !!keyboard && (keyboard.tandemKeymap || !!keyboard.studio?.available);
   const [name, setName] = useState("adv360-config");
   const [isPrivate, setPrivate] = useState(true);
@@ -283,13 +317,14 @@ function NewRepo({ keyboard, onBack, onSession }: { keyboard: KeyboardInfo | nul
   };
 
   const validName = /^[A-Za-z0-9._-]{1,100}$/.test(name);
-  const ready = validName && (source === "kinesis" || !!imported);
+  const needsPrivate = isPrivate && !session.privateRepos && session.source === "oauth";
+  const ready = validName && (source === "kinesis" || !!imported) && !needsPrivate;
 
   return (
     <>
       <Back onClick={onBack} />
       <h1>Start a new repo</h1>
-      <p className="lede">Tandem copies Kinesis's current Adv360 Pro config into a new repo on your account, with Tandem already set up.</p>
+      <p className="lede">Tandem creates a repo on your account with Kinesis's Adv360 Pro config and Tandem already set up.</p>
 
       <div className="form-row">
         <label className="field">
@@ -310,6 +345,7 @@ function NewRepo({ keyboard, onBack, onSession }: { keyboard: KeyboardInfo | nul
         </div>
       </div>
       {isPrivate && <p className="hint">Private repos get 2,000 free GitHub Actions minutes a month. A build takes about 3.</p>}
+      {needsPrivate && <PrivateRepos session={session}>Tandem needs your OK to create private repos.</PrivateRepos>}
 
       <div className="field">
         <span className="field__label">Start from</span>
@@ -477,7 +513,7 @@ function Install({ session, onSession }: { session: Session; onSession: (s: Sess
 export function LayoutStep({ session, keyboard, onSession }: { session: Session; keyboard: KeyboardInfo | null; onSession: (s: Session) => void }) {
   const [view, setView] = useState<View>("choose");
   if (session.repo) return <Install session={session} onSession={onSession} />;
-  if (view === "existing") return <Existing onBack={() => setView("choose")} onSession={onSession} />;
-  if (view === "new") return <NewRepo keyboard={keyboard} onBack={() => setView("choose")} onSession={onSession} />;
+  if (view === "existing") return <Existing session={session} onBack={() => setView("choose")} onSession={onSession} />;
+  if (view === "new") return <NewRepo session={session} keyboard={keyboard} onBack={() => setView("choose")} onSession={onSession} />;
   return <Choose keyboard={keyboard} onView={setView} onSession={onSession} />;
 }

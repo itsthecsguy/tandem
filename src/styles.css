@@ -2760,3 +2760,52 @@ select.input {
 .btn--danger-text {
   color: var(--err);
 }
+
+/* Browser engine: choosing a drive, allowing a port, copying by hand. */
+
+.drive-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.drive-pick .hint {
+  max-width: 52ch;
+}
+
+.manual-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.connect-ports {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.connect-ports .hint {
+  max-width: 60ch;
+}
+
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+button.link:hover {
+  text-decoration: underline;
+}
+
+button.link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

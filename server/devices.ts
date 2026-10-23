@@ -242,7 +242,7 @@ async function scan(): Promise<DevicesStatus> {
     await saveState({ knownSerials: learned });
   }
 
-  return { ...halves, unknownBootloaders, scannedAt: new Date().toISOString() };
+  return { ...halves, unknownBootloaders, needsAccess: false, scannedAt: new Date().toISOString() };
 }
 
 /** Forget probe results for a half, e.g. after flashing it. */
