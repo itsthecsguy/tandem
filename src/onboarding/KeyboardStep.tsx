@@ -119,6 +119,13 @@ export function KeyboardStep({ onContinue }: { onContinue: (info: KeyboardInfo |
           {info?.studio?.available ? "It has ZMK Studio, so Tandem can read your current layout from it. " : ""}
           Setup installs Tandem firmware once, with a key combo on each half. After that, updates need no key presses.
         </p>
+      ) : browser && left?.mode === "app" && !left.autoflash && right?.mode === "missing" ? (
+        <p className="callout">
+          <strong>This keyboard runs standard ZMK firmware.</strong>{" "}
+          {info?.studio?.available ? "It has ZMK Studio, so Tandem can read your current layout from it. " : ""}
+          The right half has no port the browser can see until it runs Tandem firmware. Setup installs that once, with a key combo on each
+          half.
+        </p>
       ) : (
         <p className="hint ob__status">Waiting for {left?.mode === "app" ? "the right half" : right?.mode === "app" ? "the left half" : "both halves"}.</p>
       )}
