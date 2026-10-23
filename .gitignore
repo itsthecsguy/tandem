@@ -5,3 +5,6 @@ dist/
 
 # Built by `npm run vendor` on install.
 helper/vendor/zmk-studio-client.js
+
+# Local Worker settings, including the OAuth app secret. Never commit.
+.dev.vars

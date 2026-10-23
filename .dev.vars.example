@@ -1,0 +1,5 @@
+# Copy to .dev.vars for `wrangler dev`. Values here override wrangler.toml.
+# From your GitHub OAuth app, whose callback URL is
+# http://127.0.0.1:8787/auth/callback
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
