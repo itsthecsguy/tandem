@@ -64,6 +64,9 @@ export interface StoredToken {
   token: string;
   /** Scopes GitHub granted, as its token response lists them. */
   scope: string;
+  /** When the OAuth app makes tokens expire: how to get a new one, and when. */
+  refreshToken?: string;
+  expiresAt?: number;
 }
 
 export function loadToken(): StoredToken | null {
@@ -76,6 +79,27 @@ export function loadToken(): StoredToken | null {
 
 export function saveToken(token: StoredToken | null) {
   write(TOKEN_KEY, token && JSON.stringify(token));
+}
+
+// The update in progress, so a reload can say it stopped part way. Per tab.
+
+const JOB_KEY = "tandem.job";
+
+export function saveJob(job: unknown | null) {
+  try {
+    if (job === null) sessionStorage.removeItem(JOB_KEY);
+    else sessionStorage.setItem(JOB_KEY, JSON.stringify(job));
+  } catch {
+    // Only matters if the page reloads mid-update.
+  }
+}
+
+export function loadJob<T>(): T | null {
+  try {
+    return JSON.parse(sessionStorage.getItem(JOB_KEY) ?? "null");
+  } catch {
+    return null;
+  }
 }
 
 // Firmware builds, a few at a time.

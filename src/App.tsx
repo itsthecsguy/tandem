@@ -100,10 +100,10 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
 
   const view = useMemo(() => (job ? viewJob(job) : null), [job]);
 
-  // Reopen the sheet for an update already in progress, and refresh when one ends.
+  // Reopen the sheet for an update in progress or cut short by a reload, and refresh when one ends.
   useEffect(() => {
-    if (job?.running || demo) setSheetOpen(true);
-  }, [job?.id, job?.running, demo]);
+    if (job?.running || job?.interrupted || demo) setSheetOpen(true);
+  }, [job?.id, job?.running, job?.interrupted, demo]);
   useEffect(() => {
     if (view?.done) load();
   }, [view?.done, load]);

@@ -13,6 +13,7 @@
   "scripts": {
     "dev": "vite",
     "dev:helper": "concurrently -k -n helper,web -c blue,magenta \"npm --prefix helper run dev\" \"TANDEM_HELPER=1 vite\"",
+    "site": "vite build && wrangler dev --ip 127.0.0.1 --port 8787",
     "build": "vite build",
     "helper": "vite build && npm --prefix helper start",
     "test": "vitest run",
@@ -34,6 +35,7 @@
     "concurrently": "^10.0.6",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "wrangler": "^4.152.0"
   }
 }

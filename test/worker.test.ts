@@ -64,6 +64,29 @@ describe("worker", () => {
     expect(github).not.toHaveBeenCalled();
   });
 
+  it("passes on a refresh token and when the token expires", async () => {
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ access_token: "ghu_new", scope: "", refresh_token: "ghr_1", expires_in: 28800, refresh_token_expires_in: 15811200 })),
+    );
+    const res = await worker.fetch(exchange(good), env());
+    expect(await res.json()).toEqual({ token: "ghu_new", scope: "", refreshToken: "ghr_1", expiresIn: 28800 });
+  });
+
+  it("trades a refresh token for a new access token", async () => {
+    const sent: Record<string, string>[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ access_token: "ghu_2", scope: "", refresh_token: "ghr_2", expires_in: 28800 }));
+    });
+    const refresh = (body: unknown, origin = SITE) =>
+      new Request(`${SITE}/api/auth/refresh`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const res = await worker.fetch(refresh({ refresh_token: "ghr_1" }), env());
+    expect(await res.json()).toEqual({ token: "ghu_2", scope: "", refreshToken: "ghr_2", expiresIn: 28800 });
+    expect(sent).toEqual([{ client_id: "Ov23liTest", client_secret: "shh", grant_type: "refresh_token", refresh_token: "ghr_1" }]);
+    expect((await worker.fetch(refresh({ refresh_token: "ghr_1" }, "https://evil.example"), env())).status).toBe(403);
+    expect((await worker.fetch(refresh({}), env())).status).toBe(400);
+  });
+
   it("serves the site with security headers", async () => {
     const res = await worker.fetch(new Request(`${SITE}/auth/callback?code=abc`), env());
     expect(await res.text()).toBe("<!doctype html>");

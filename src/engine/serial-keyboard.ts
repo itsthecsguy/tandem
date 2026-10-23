@@ -206,10 +206,19 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     return seen;
   }
 
-  async function flashHalf(side: Side, build: Build, emit: Parameters<Flash>[1], signal: AbortSignal): Promise<boolean> {
+  async function flashHalf(
+    side: Side,
+    build: Build,
+    emit: Parameters<Flash>[1],
+    signal: AbortSignal,
+    /** The half's drive, when it's already in update mode. */
+    ready: DriveLike | null = null,
+  ): Promise<boolean> {
     const step = `flash-${side}` as const;
-    const found = tandemPort(side);
-    if (found) {
+    const found = ready ? null : tandemPort(side);
+    if (ready) {
+      emit({ type: "step", step, state: "active", detail: "Already in update mode" });
+    } else if (found) {
       emit({ type: "step", step, state: "active", detail: "Restarting into update mode" });
       busy.add(found[0]);
       try {
@@ -222,8 +231,8 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       emit({ type: "manual", side, reason: "no-autoflash" });
     }
 
-    const d = await findDrive(side, !!found, emit, signal);
-    if (!found) emit({ type: "manual-done", side });
+    const d = ready ?? (await findDrive(side, !!found, emit, signal));
+    if (!found && !ready) emit({ type: "manual-done", side });
     emit({ type: "step", step, state: "active", detail: "Copying firmware" });
     await copyFirmware(d, side, build[side]);
     emit({ type: "step", step, state: "active", detail: "Restarting" });
@@ -252,8 +261,21 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       state: "done",
       detail: tandem.length === 2 ? "Both halves run Tandem firmware" : tandem.length ? `The ${tandem[0]} half runs Tandem firmware` : "Neither half runs Tandem firmware yet",
     });
+    // A half left in update mode, say by a reload mid-update, has its drive
+    // showing already. Both halves' drives look the same, so it only counts
+    // when the other half is plainly running Tandem firmware.
+    let waiting: { side: Side; drive: DriveLike } | null = null;
+    if (drive && (await isUpdateDrive(drive))) {
+      const silent = SIDES.filter((s) => !d[s].autoflash);
+      if (silent.length !== 1) {
+        throw new Error("One half is already in update mode, and Tandem can't tell which. Press that half's reset button once so it restarts, then update again.");
+      }
+      waiting = { side: silent[0], drive };
+    }
+
     let checked = true;
-    for (const side of SIDES) checked = (await flashHalf(side, build, emit, signal)) && checked;
+    const order = waiting ? [waiting.side, ...SIDES.filter((s) => s !== waiting!.side)] : SIDES;
+    for (const side of order) checked = (await flashHalf(side, build, emit, signal, side === waiting?.side ? waiting.drive : null)) && checked;
     emit({ type: "step", step: "verify", state: checked ? "done" : "skipped", detail: checked ? `Both halves run ${build.id}` : "The browser couldn't ask every half" });
     return checked;
   };

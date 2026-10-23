@@ -1,9 +1,12 @@
 # tandemkb.com on Cloudflare: the built site in dist/, served by the Worker in
 # worker/index.ts. Deploy with `npm run build && npx wrangler deploy`.
+# `npm run site` runs the same thing locally on http://127.0.0.1:8787, with
+# the OAuth app's ID and secret from .dev.vars.
 
 name = "tandem"
 main = "worker/index.ts"
 compatibility_date = "2026-10-01"
+send_metrics = false
 
 [assets]
 directory = "./dist"

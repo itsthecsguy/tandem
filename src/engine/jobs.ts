@@ -4,7 +4,7 @@
 
 import type { JobEvent, JobSnapshot, Keymap } from "../../shared/types";
 import { type Build, cachedBuild, cloudBuild } from "./builds";
-import { loadState, saveState } from "./store";
+import { loadJob, loadState, saveJob, saveState } from "./store";
 import { connectedRepo, github, openWorkspace, saveKeymap } from "./workspace";
 
 export type Emit = (e: JobEvent) => void;
@@ -22,6 +22,8 @@ class Job {
 
   emit = (e: JobEvent) => {
     this.events.push(e);
+    // Kept per tab, so a reload can say where the update stopped.
+    saveJob({ ...this.snapshot(), running: e.type !== "done" && e.type !== "error" });
     this.onEvent(e);
   };
 
@@ -32,8 +34,18 @@ class Job {
 
 let current: Job | null = null;
 
+/** An update the last page load left running: it stopped when the page went away. */
+const interrupted: JobSnapshot | null = (() => {
+  const saved = loadJob<JobSnapshot>();
+  if (!saved?.running) return null;
+  const message =
+    "The page reloaded during this update, so it stopped. Run it again. Tandem reuses the build GitHub already made, and a half left in update mode carries on from there.";
+  return { ...saved, running: false, interrupted: true, events: [...saved.events, { type: "error", message }] };
+})();
+saveJob(interrupted);
+
 export function currentJob(): JobSnapshot | null {
-  return current?.snapshot() ?? null;
+  return current?.snapshot() ?? interrupted;
 }
 
 export function cancelJob() {

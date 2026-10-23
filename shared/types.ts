@@ -196,4 +196,6 @@ export interface JobSnapshot {
   id: string;
   running: boolean;
   events: JobEvent[];
+  /** The page reloaded while this update ran, so it stopped part way. */
+  interrupted?: boolean;
 }

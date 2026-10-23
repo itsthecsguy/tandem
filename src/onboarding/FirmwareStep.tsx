@@ -17,7 +17,7 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
     api.state().then(setState, (e) => setError(e.message));
   }, []);
 
-  const view = useMemo(() => (job && (started || job.running) ? viewJob(job) : null), [job, started]);
+  const view = useMemo(() => (job && (started || job.running || job.interrupted) ? viewJob(job) : null), [job, started]);
 
   const finish = async () => {
     setBusy(true);

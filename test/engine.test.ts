@@ -165,6 +165,36 @@ describe("browser engine", () => {
     await until(() => events.find((x) => x.type === "done"));
   });
 
+  it("says an update stopped when the page reloaded part way", async () => {
+    // sessionStorage outlives a reload; module state doesn't.
+    const tab = new Map<string, string>();
+    vi.stubGlobal("sessionStorage", {
+      getItem: (k: string) => tab.get(k) ?? null,
+      setItem: (k: string, v: string) => tab.set(k, v),
+      removeItem: (k: string) => tab.delete(k),
+    });
+    fake.addRepo("octocat", "adv360", tandemRepo());
+    const before = await engine();
+    await before.connect({ owner: "octocat", name: "adv360", branch: "main" });
+    const events = record(before);
+    const { keymap } = await before.state();
+    keymap.layers[0].bindings[15] = "&ltr 2 Q";
+    await before.update(keymap);
+    await until(() => events.find((x) => x.type === "manual-flash"));
+
+    const after = await engine();
+    const jobs: unknown[] = [];
+    after.subscribe((l) => l.type === "job" && jobs.push(l.job));
+    expect(jobs).toEqual([
+      expect.objectContaining({
+        running: false,
+        interrupted: true,
+        events: expect.arrayContaining([expect.objectContaining({ type: "error", message: expect.stringMatching(/page reloaded/) })]),
+      }),
+    ]);
+    vi.unstubAllGlobals();
+  });
+
   it("creates a repo from the template, with the keyboard's layers", async () => {
     fake.addRepo("itsthecsguy", "tandem-config", tandemRepo(), { template: true });
     vi.resetModules();

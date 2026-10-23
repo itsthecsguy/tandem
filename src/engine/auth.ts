@@ -8,7 +8,7 @@
 // In development there's no Worker, so Tandem can use the GitHub CLI's login,
 // which the Vite dev server reads for this page only.
 
-import { loadState, loadToken, saveState, saveToken } from "./store";
+import { type StoredToken, loadState, loadToken, saveState, saveToken } from "./store";
 
 /** Scopes Tandem asks for. `repo` replaces `public_repo` once someone needs private repos. */
 export function scopesFor(privateRepos: boolean): string[] {
@@ -42,9 +42,47 @@ export function ghCliToken(): Promise<string | null> {
   return token;
 }
 
+/** Turns the Worker's answer into what Tandem keeps. */
+function stored(data: { token: string; scope?: string; refreshToken?: string; expiresIn?: number }): StoredToken {
+  return {
+    token: data.token,
+    scope: data.scope ?? "",
+    ...(data.refreshToken ? { refreshToken: data.refreshToken } : {}),
+    ...(data.expiresIn ? { expiresAt: Date.now() + data.expiresIn * 1000 } : {}),
+  };
+}
+
+/** Renew a token this long before GitHub expires it. */
+const REFRESH_EARLY_MS = 10 * 60_000;
+let refreshing: Promise<StoredToken | null> | null = null;
+
+/** Trades the refresh token for a new access token. Signs out if GitHub refuses. */
+function refresh(old: StoredToken): Promise<StoredToken | null> {
+  refreshing ??= fetch("/api/auth/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: old.refreshToken }),
+  })
+    .then(async (res) => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.token) {
+        saveToken(null);
+        return null;
+      }
+      const next = stored(data);
+      saveToken(next);
+      return next;
+    })
+    // Offline, say. Keep the old token while it still works.
+    .catch(() => (old.expiresAt! > Date.now() ? old : null))
+    .finally(() => (refreshing = null));
+  return refreshing;
+}
+
 export async function getToken(): Promise<Token | null> {
-  const stored = loadToken();
-  if (stored) return { token: stored.token, source: "oauth" };
+  let token = loadToken();
+  if (token?.refreshToken && token.expiresAt && Date.now() > token.expiresAt - REFRESH_EARLY_MS) token = await refresh(token);
+  if (token) return { token: token.token, source: "oauth" };
   if (loadState().useGh) {
     const token = await ghCliToken();
     if (token) return { token, source: "gh" };
@@ -134,6 +172,6 @@ export async function finishSignIn(): Promise<void> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.token) throw new Error(data.error ?? "GitHub sign-in failed. Try again.");
-  saveToken({ token: data.token, scope: data.scope ?? "" });
+  saveToken(stored(data));
   saveState({ useGh: false });
 }

@@ -36,13 +36,13 @@ beforeEach(() => {
 
 afterEach(() => restore());
 
-async function setup(kb: FakeKeyboard, pick?: () => DriveLike) {
+async function setup(kb: FakeKeyboard, pick?: () => DriveLike, savedDrive?: DriveLike) {
   vi.resetModules();
   const store = await import("../src/engine/store");
   store.saveToken({ token: "gho_test", scope: "public_repo workflow" });
   const { keyboardAccess } = await import("../src/engine/serial-keyboard");
   const { browserEngine } = await import("../src/engine/browser");
-  const access = keyboardAccess({ serial: kb, pickDirectory: kb.picker(pick), timing: TIMING });
+  const access = keyboardAccess({ serial: kb, pickDirectory: kb.picker(pick), timing: TIMING, loadDrive: async () => savedDrive ?? null });
   const engine = browserEngine(access);
   await engine.connect({ owner: "octocat", name: "adv360", branch: "main" });
   const events: JobEvent[] = [];
@@ -173,6 +173,34 @@ describe("Web Serial keyboard", () => {
     stop();
     expect(end).toMatchObject({ type: "error", message: expect.stringMatching(/right half is running build old1234/) });
     expect(kb.left.flashedWith).toBeNull();
+  });
+
+  it("finishes a half that a reload left in update mode", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowAll();
+    const { engine, events } = await setup(kb, undefined, new FakeDrive(kb, 0));
+    kb.right.enterUpdateMode();
+    await until(() => !kb.right.ports().length);
+    github.build(github.head("octocat", "adv360"));
+    const stop = autopilot(engine, events, kb);
+    await engine.update();
+    const end = await until(done(events));
+    stop();
+    expect(end).toMatchObject({ type: "done", checked: true });
+    expect(events).toContainEqual({ type: "step", step: "flash-right", state: "active", detail: "Already in update mode" });
+    expect(events.some((e) => e.type === "drive" || e.type === "manual")).toBe(false);
+    expect(kb.pickerOpened).toBe(0);
+  });
+
+  it("won't guess which half is in update mode", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.allowAll();
+    const { engine, events } = await setup(kb, undefined, new FakeDrive(kb, 0));
+    kb.right.enterUpdateMode();
+    github.build(github.head("octocat", "adv360"));
+    await engine.update();
+    expect(await until(done(events))).toMatchObject({ type: "error", message: expect.stringMatching(/can't tell which/) });
+    expect(kb.right.flashedWith).toBeNull();
   });
 
   it("reads the layout from Tandem firmware", async () => {

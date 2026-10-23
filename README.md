@@ -66,6 +66,14 @@ npm run dev
 
 Then open http://localhost:5317. Without the Worker there's no GitHub sign-in, so the dev server lets the page use the GitHub CLI's login instead. `npm run dev:helper` runs the UI against the helper.
 
+To run the site the way it's deployed, with the Worker and real GitHub sign-in, create a GitHub OAuth app whose callback URL is `http://127.0.0.1:8787/auth/callback`, copy `.dev.vars.example` to `.dev.vars` with its client ID and secret, then:
+
+```bash
+npm run site
+```
+
+and open http://127.0.0.1:8787.
+
 ```bash
 npm test
 npm run typecheck

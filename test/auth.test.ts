@@ -69,3 +69,41 @@ describe("finishing sign-in", () => {
     await expect(auth.finishSignIn()).rejects.toThrow(/denied your application access/);
   });
 });
+
+describe("keeping a sign-in alive", () => {
+  async function load() {
+    vi.resetModules();
+    return { auth: await import("../src/engine/auth"), store: await import("../src/engine/store") };
+  }
+
+  it("renews a token shortly before it expires", async () => {
+    const { auth, store } = await load();
+    store.saveToken({ token: "ghu_old", scope: "", refreshToken: "ghr_1", expiresAt: Date.now() + 60_000 });
+    const sent: unknown[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      sent.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify({ token: "ghu_new", scope: "", refreshToken: "ghr_2", expiresIn: 28800 }));
+    });
+    expect(await auth.getToken()).toEqual({ token: "ghu_new", source: "oauth" });
+    expect(sent).toEqual([{ url: "/api/auth/refresh", body: { refresh_token: "ghr_1" } }]);
+    expect(store.loadToken()).toMatchObject({ token: "ghu_new", refreshToken: "ghr_2" });
+    expect(store.loadToken()!.expiresAt).toBeGreaterThan(Date.now() + 7 * 3600_000);
+  });
+
+  it("leaves a fresh token alone", async () => {
+    const { auth, store } = await load();
+    store.saveToken({ token: "ghu_fresh", scope: "", refreshToken: "ghr_1", expiresAt: Date.now() + 3600_000 });
+    const github = vi.fn();
+    vi.stubGlobal("fetch", github);
+    expect(await auth.getToken()).toEqual({ token: "ghu_fresh", source: "oauth" });
+    expect(github).not.toHaveBeenCalled();
+  });
+
+  it("signs out when GitHub won't renew it", async () => {
+    const { auth, store } = await load();
+    store.saveToken({ token: "ghu_old", scope: "", refreshToken: "ghr_revoked", expiresAt: Date.now() - 1000 });
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: "The refresh token is invalid." }), { status: 400 }));
+    expect(await auth.getToken()).toBeNull();
+    expect(store.loadToken()).toBeNull();
+  });
+});
