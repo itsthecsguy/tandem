@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { DevicesStatus, JobSnapshot } from "../shared/types";
 import { browserEngine } from "./engine/browser";
 import { helperEngine } from "./engine/helper";
+import { keyboardAccess } from "./engine/serial-keyboard";
 import type { Engine } from "./engine/types";
 
 /** Set by initApi() before the app renders. */
@@ -16,7 +17,7 @@ export let api: Engine;
 export async function initApi(): Promise<void> {
   const forced = new URLSearchParams(location.search).get("engine");
   const helper = forced ? forced === "helper" : await helperServesThisPage();
-  api = helper ? helperEngine() : browserEngine();
+  api = helper ? helperEngine() : browserEngine(keyboardAccess());
 }
 
 async function helperServesThisPage(): Promise<boolean> {

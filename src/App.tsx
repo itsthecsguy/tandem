@@ -1,4 +1,4 @@
-import { ArrowUpRight, Check, RotateCcw } from "lucide-react";
+import { ArrowUpRight, Check, RotateCcw, Usb } from "lucide-react";
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { parseBinding } from "../shared/bindings";
@@ -276,6 +276,16 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
         <div className="topbar__right">
           <ThemeMenu />
           {api.caps.keyboard && devices && left && right && <KeyboardStatus devices={devices} left={left} right={right} />}
+          {api.caps.engine === "browser" && api.caps.keyboard && devices?.needsAccess && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => api.connectKeyboard().catch((e: Error) => setError(e.message))}
+              title="Let this browser open the keyboard's ports"
+            >
+              <Usb size={15} /> Connect
+            </button>
+          )}
           {dirty && (
             <button type="button" className="btn btn--ghost btn--icon" onClick={() => setDraft(state.keymap)} title="Discard changes" aria-label="Discard changes">
               <RotateCcw size={15} />

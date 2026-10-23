@@ -1,5 +1,5 @@
 // Fake update runs for reviewing the update sheet without a keyboard.
-// Open the dev server with ?demo=setup, ?demo=auto or ?demo=done.
+// Open the dev server with ?demo=setup, auto, drive, firsttime, port, byhand or done.
 
 import type { JobEvent, JobSnapshot, Session } from "../../shared/types";
 
@@ -26,6 +26,41 @@ const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
       ...base,
       { type: "step", step: "flash-right", state: "active", detail: "Copying firmware" },
       { type: "step", step: "flash-left", state: "active", detail: "Restarting into update mode" },
+    ],
+  },
+  drive: {
+    running: true,
+    events: [
+      ...base,
+      { type: "step", step: "flash-right", state: "active", detail: "Waiting for its drive" },
+      { type: "drive", side: "right" },
+    ],
+  },
+  firsttime: {
+    running: true,
+    events: [
+      ...base,
+      { type: "step", step: "flash-right", state: "active", detail: "Waiting for update mode" },
+      { type: "manual", side: "right", reason: "no-autoflash" },
+      { type: "drive", side: "right" },
+    ],
+  },
+  port: {
+    running: true,
+    events: [
+      ...base,
+      { type: "step", step: "flash-right", state: "active", detail: "Restarting" },
+      { type: "grant-port", side: "right" },
+    ],
+  },
+  byhand: {
+    running: true,
+    events: [
+      ...base.slice(0, 4),
+      { type: "step", step: "prepare", state: "skipped", detail: "This browser can't reach the keyboard" },
+      { type: "step", step: "flash-right", state: "active", detail: "Copy right.uf2 by hand" },
+      { type: "step", step: "flash-left", state: "active", detail: "Copy left.uf2 by hand" },
+      { type: "manual-flash", left: "#", right: "#" },
     ],
   },
   done: {

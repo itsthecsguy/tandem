@@ -95,8 +95,12 @@ let database: Promise<IDBDatabase | null> | null = null;
 function db(): Promise<IDBDatabase | null> {
   database ??= new Promise((resolve) => {
     if (typeof indexedDB === "undefined") return resolve(null);
-    const req = indexedDB.open("tandem", 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("builds", { keyPath: "key" });
+    const req = indexedDB.open("tandem", 2);
+    req.onupgradeneeded = () => {
+      const names = req.result.objectStoreNames;
+      if (!names.contains("builds")) req.result.createObjectStore("builds", { keyPath: "key" });
+      if (!names.contains("handles")) req.result.createObjectStore("handles");
+    };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => resolve(null);
   });
@@ -127,4 +131,24 @@ export async function putBuild(build: StoredBuild): Promise<void> {
   const all = (await done(store.getAll())) as StoredBuild[];
   all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   for (const old of all.slice(KEEP_BUILDS)) await done(store.delete(old.key));
+}
+
+// The update drive the user chose last, so a later update can try it again
+// without asking. Browsers keep the permission for it between visits.
+
+let memoryDrive: unknown = null;
+
+export async function loadDrive<T>(): Promise<T | null> {
+  const d = await db();
+  if (!d) return memoryDrive as T | null;
+  return ((await done(d.transaction("handles").objectStore("handles").get("drive"))) as T | undefined) ?? null;
+}
+
+export async function saveDrive(handle: unknown): Promise<void> {
+  const d = await db();
+  if (!d) {
+    memoryDrive = handle;
+    return;
+  }
+  await done(d.transaction("handles", "readwrite").objectStore("handles").put(handle, "drive"));
 }

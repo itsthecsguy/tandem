@@ -175,10 +175,12 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
           <strong>You put each half in update mode.</strong> Tandem shows you which two keys to press, right half first.
         </li>
         <li>
-          <strong>Tandem copies the firmware</strong> and checks that each half comes back running it.
+          <strong>Tandem copies the firmware</strong>
+          {api.caps.engine === "browser" ? " once you point it at each half's drive, " : " "}
+          and checks that each half comes back running it.
         </li>
       </ol>
-      {!both && (
+      {!both && api.caps.engine === "helper" && (
         <p className="callout">
           <Plug size={15} /> Connect both halves with USB cables. Tandem will wait for them.
         </p>

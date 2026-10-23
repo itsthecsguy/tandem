@@ -2780,6 +2780,10 @@ select.input {
   gap: 8px;
 }
 
+.manual-files a.btn {
+  text-decoration: none;
+}
+
 .connect-ports {
   display: flex;
   flex-direction: column;
