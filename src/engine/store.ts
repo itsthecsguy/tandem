@@ -62,7 +62,7 @@ export function saveState(patch: Partial<SavedState>): SavedState {
 
 export interface StoredToken {
   token: string;
-  /** Scopes GitHub granted, space separated, as its token response gives them. */
+  /** Scopes GitHub granted, as its token response lists them. */
   scope: string;
 }
 

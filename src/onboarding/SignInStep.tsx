@@ -180,11 +180,13 @@ export function SignInStep({ session, onSession }: { session: Session; onSession
           )}
           {!oauth && !device && !session.ghLogin && (
             <p className="callout">
-              {browser ? (
+              {browser && import.meta.env.DEV ? (
                 <>
-                  GitHub sign-in isn't set up on this server. To try Tandem locally, sign in with the GitHub CLI (<code>gh auth login</code>) and
-                  reload, or run the local helper.
+                  Sign in with the GitHub CLI (<code>gh auth login</code>) and reload. The dev server uses its login, since GitHub sign-in on the
+                  site needs the site's Worker.
                 </>
+              ) : browser ? (
+                "GitHub sign-in isn't set up on this site yet."
               ) : (
                 <>
                   Sign in with the GitHub CLI first (<code>gh auth login</code>), or start Tandem with <code>TANDEM_GITHUB_CLIENT_ID</code> set to

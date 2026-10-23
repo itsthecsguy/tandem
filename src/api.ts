@@ -20,6 +20,8 @@ export async function initApi(): Promise<void> {
 }
 
 async function helperServesThisPage(): Promise<boolean> {
+  // The helper only ever runs on this computer.
+  if (!["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) return false;
   try {
     const res = await fetch("/api/engine", { signal: AbortSignal.timeout(1500) });
     if (!res.ok || !(res.headers.get("content-type") ?? "").includes("json")) return false;
