@@ -28,19 +28,16 @@ export interface Token {
   source: "oauth" | "gh";
 }
 
-let devCache: { token: string | null; at: number } | null = null;
+let devCache: { token: Promise<string | null>; at: number } | null = null;
 
-/** The GitHub CLI's token, in development only. */
-export async function ghCliToken(): Promise<string | null> {
-  if (!import.meta.env.DEV) return null;
+/** The GitHub CLI's token, in development only. Asked for at most once a minute. */
+export function ghCliToken(): Promise<string | null> {
+  if (!import.meta.env.DEV) return Promise.resolve(null);
   if (devCache && Date.now() - devCache.at < 60_000) return devCache.token;
-  let token: string | null = null;
-  try {
-    const res = await fetch("/__dev/gh-token", { headers: { "X-Tandem-Dev": "1" } });
-    if (res.ok) token = (await res.json()).token ?? null;
-  } catch {
+  const token = fetch("/__dev/gh-token", { headers: { "X-Tandem-Dev": "1" } })
+    .then(async (res) => (res.ok ? ((await res.json()).token ?? null) : null))
     // No dev server, or no GitHub CLI.
-  }
+    .catch(() => null);
   devCache = { token, at: Date.now() };
   return token;
 }
