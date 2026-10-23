@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { parseKeymap, toKeymap } from "../server/keymap";
+import { parseKeymap, toKeymap } from "../shared/keymap";
 import { zmkCode, zmkShortcut } from "../src/lib/keyEvents";
 import { activatorSummary, layerActivators } from "../src/lib/layers";
 

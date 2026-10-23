@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { formatBinding, parseBinding } from "../shared/bindings";
-import { importKeymap, parseKeymap, toKeymap, writeKeymap } from "../server/keymap";
-import { readLayout } from "../server/layout";
+import { importKeymap, parseKeymap, toKeymap, writeKeymap } from "../shared/keymap";
+import { readLayout } from "../shared/layout";
 
 const fixture = (name: string) => readFileSync(join(__dirname, "fixtures", name), "utf8");
 const keymapText = fixture("adv360.keymap");

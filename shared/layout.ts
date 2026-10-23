@@ -1,4 +1,4 @@
-import type { LayoutKey } from "../shared/types";
+import type { LayoutKey } from "./types";
 
 interface InfoKey {
   label?: string;

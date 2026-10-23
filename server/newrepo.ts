@@ -9,8 +9,8 @@ import { join, relative } from "node:path";
 
 import type { Layer, LayoutKey, RepoRef } from "../shared/types";
 import type { GitHub } from "./github";
-import { importKeymap, replaceLayers } from "./keymap";
-import { readLayout } from "./layout";
+import { importKeymap, replaceLayers } from "../shared/keymap";
+import { readLayout } from "../shared/layout";
 import { KEYMAP_PATH, WORKFLOW_PATH, moduleFiles, patchWorkflow } from "./setup";
 
 export const TEMPLATE = { owner: "KinesisCorporation", name: "Adv360-Pro-ZMK", ref: "V3.0" };

@@ -4,7 +4,7 @@
 
 import type { ImportedLayout, KeyboardInfo } from "../shared/types";
 import { readTandemKeymap, scanDevices } from "./devices";
-import { parseKeymap, toKeymap } from "./keymap";
+import { parseKeymap, toKeymap } from "../shared/keymap";
 import { kinesisLayout } from "./newrepo";
 import { readStudioLayout, studioStatus } from "./studio";
 import { github } from "./workspace";

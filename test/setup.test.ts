@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { KEYMAP_PATH, WORKFLOW_PATH, moduleFiles, patchWorkflow, setupPlan, unpatchWorkflow } from "../server/setup";
+import { KEYMAP_PATH, WORKFLOW_PATH, patchWorkflow, setupPlan, unpatchWorkflow } from "../shared/setup";
+import { MODULE_FILES } from "../src/engine/module";
 
 const workflow = readFileSync(join(__dirname, "fixtures", "build.yml"), "utf8");
 
@@ -10,9 +11,14 @@ describe("this repo", () => {
   const read = (path: string) => readFileSync(join(__dirname, "..", path), "utf8");
 
   // A fork of this repo should need no setup commit.
-  it("has Tandem set up already", async () => {
-    const module = new Map((await moduleFiles()).map((f) => [f.path, read(f.path)]));
-    const plan = await setupPlan({ workflow: read(WORKFLOW_PATH), keymap: read(KEYMAP_PATH), info: read("config/info.json"), module });
+  it("bundles every file of the firmware module", () => {
+    expect(MODULE_FILES.map((f) => f.path)).toContain("tandem/zmk-tandem/src/autoflash.c");
+    expect(MODULE_FILES.map((f) => f.path)).toContain("tandem/zmk-tandem/zephyr/module.yml");
+  });
+
+  it("has Tandem set up already", () => {
+    const module = new Map(MODULE_FILES.map((f) => [f.path, read(f.path)]));
+    const plan = setupPlan({ workflow: read(WORKFLOW_PATH), keymap: read(KEYMAP_PATH), info: read("config/info.json"), module }, MODULE_FILES);
     expect(plan.status).toEqual({ installed: true, outdated: false, changes: [], blocker: null });
   });
 });

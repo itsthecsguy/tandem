@@ -10,8 +10,8 @@ import { basename, join } from "node:path";
 
 import type { BuildRecord, BuildSettings, Keymap, LayoutKey, RepoRef, Session, SetupStatus, Side } from "../shared/types";
 import { CLIENT_ID, GitHub, REQUIRED_SCOPES, forgetToken, getToken, ghCliToken, signOut as dropToken } from "./github";
-import { parseKeymap, toKeymap, writeKeymap } from "./keymap";
-import { readLayout } from "./layout";
+import { parseKeymap, toKeymap, writeKeymap } from "../shared/keymap";
+import { readLayout } from "../shared/layout";
 import { type NewRepoOptions, createRepo } from "./newrepo";
 import { KEYMAP_PATH, WORKFLOW_PATH, moduleFiles, setupPlan } from "./setup";
 

@@ -2,7 +2,7 @@
 // write: the contents of each layer's `bindings = < ... >`, and Tandem's
 // marked block of behavior definitions. Everything else stays byte for byte.
 
-import type { Keymap, Layer, RepeatTiming } from "../shared/types";
+import type { Keymap, Layer, RepeatTiming } from "./types";
 
 export const DEFAULT_REPEAT: RepeatTiming = { tappingTermMs: 200, quickTapMs: 200 };
 

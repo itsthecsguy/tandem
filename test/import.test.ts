@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { usageToCode } from "../shared/hid";
-import { parseKeymap, replaceLayers } from "../server/keymap";
-import { readLayout } from "../server/layout";
-import { convertStudioKeymap, studioToBinding } from "../server/studio";
+import { parseKeymap, replaceLayers } from "../shared/keymap";
+import { readLayout } from "../shared/layout";
+import { convertStudioKeymap, studioToBinding } from "../shared/studio";
 
 const usage = (page: number, id: number, mods = 0) => ((mods << 24) | (page << 16) | id) >>> 0;
 const fixture = (name: string) => readFileSync(join(__dirname, "fixtures", name), "utf8");
