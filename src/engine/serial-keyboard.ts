@@ -19,7 +19,7 @@ import { KINESIS_LAYOUT } from "./kinesis";
 import { manualFlash } from "./manual";
 import { answer, isWaiting, waitFor } from "./prompts";
 import { KINESIS_VID, type PortLike, type SerialLike, type TandemInfo, askInfo, readTandemKeymap, restartToBootloader } from "./serial";
-import { loadDrive, saveDrive } from "./store";
+import { loadDrive, loadDriveReuse, saveDrive, saveDriveReuse } from "./store";
 import { sleep, withTimeout } from "./util";
 import { parseKeymap, toKeymap } from "../../shared/keymap";
 
@@ -38,7 +38,9 @@ export interface Deps {
   /** window.showDirectoryPicker. Without it, updates end with copying by hand. */
   pickDirectory?: (options: { id: string; mode: "readwrite"; startIn?: DriveLike }) => Promise<DriveLike>;
   loadDrive?: () => Promise<DriveLike | null>;
-  saveDrive?: (drive: DriveLike) => Promise<void>;
+  saveDrive?: (drive: DriveLike | null) => Promise<void>;
+  /** Whether trying the saved drive again is worth it in this browser. */
+  driveReuse?: { load(): boolean; save(on: boolean): void };
   /** How long to try the last drive before asking, and to wait for a half to come back. */
   timing?: { savedDriveMs: number; comebackMs: number; newPortMs: number; pollMs: number; infoMs: number };
 }
@@ -59,6 +61,7 @@ function browserDeps(): Deps | null {
     pickDirectory: picker && ((options) => picker.call(window, options)),
     loadDrive: () => loadDrive<DriveLike>(),
     saveDrive: (drive) => saveDrive(drive),
+    driveReuse: { load: loadDriveReuse, save: saveDriveReuse },
   };
 }
 
@@ -77,7 +80,17 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
   let devices = compute();
   let last = JSON.stringify(devices);
   let drive: DriveLike | null = null;
-  void deps.loadDrive?.().then((d) => (drive ??= d)).catch(() => {});
+  const { driveReuse, saveDrive: keepDrive } = deps;
+  let reuseDrive = driveReuse?.load() ?? true;
+  if (reuseDrive) void deps.loadDrive?.().then((d) => (drive ??= d)).catch(() => {});
+
+  /** Chrome refused to write through the saved drive. Stop trying it, here and next time. */
+  function giveUpOnSavedDrive() {
+    drive = null;
+    reuseDrive = false;
+    driveReuse?.save(false);
+    void keepDrive?.(null).catch(() => {});
+  }
 
   function tandemPort(side: Side): [PortLike, TandemInfo] | null {
     for (const [port, { info }] of known) if (info && sideOf(info) === side) return [port, info];
@@ -176,11 +189,17 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     return null;
   }
 
+  interface Found {
+    drive: DriveLike;
+    /** The user chose it just now, as opposed to the drive saved from before. */
+    picked: boolean;
+  }
+
   /** The half's update drive: the last one if the browser still allows it, or whichever the user picks. */
-  async function findDrive(side: Side, restarted: boolean, emit: Parameters<Flash>[1], signal: AbortSignal): Promise<DriveLike> {
-    if (restarted && drive) {
+  async function findDrive(side: Side, restarted: boolean, emit: Parameters<Flash>[1], signal: AbortSignal): Promise<Found> {
+    if (restarted && drive && reuseDrive) {
       const saved = await pollSaved(signal, timing.savedDriveMs);
-      if (saved) return saved;
+      if (saved) return { drive: saved, picked: false };
     }
     emit({ type: "drive", side });
     const done = new AbortController();
@@ -188,8 +207,8 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     signal.addEventListener("abort", stop, { once: true });
     const never = new Promise<never>(() => {});
     try {
-      const picked = waitFor<DriveLike>({ type: "pick-drive", side }, done.signal);
-      const saved = pollSaved(done.signal).then((d) => d ?? never);
+      const picked = waitFor<DriveLike>({ type: "pick-drive", side }, done.signal).then((d) => ({ drive: d, picked: true }));
+      const saved = (reuseDrive ? pollSaved(done.signal) : never).then((d) => (d ? { drive: d, picked: false } : never));
       // Whichever loses is abandoned below. Keep its rejection quiet.
       picked.catch(() => {});
       saved.catch(() => {});
@@ -199,6 +218,25 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       done.abort();
       emit({ type: "drive-done", side });
     }
+  }
+
+  /** Copies the firmware, asking for the drive again if Chrome won't write through the saved one. */
+  async function copyTo(found: Found, side: Side, data: Uint8Array, emit: Parameters<Flash>[1], signal: AbortSignal) {
+    try {
+      await copyFirmware(found.drive, side, data);
+      return;
+    } catch (err) {
+      if (found.picked) {
+        throw new Error(`The browser couldn't write to ${found.drive.name} (${(err as Error).message}). Unplug the ${side} half's cable, plug it back in, and update again.`);
+      }
+    }
+    // Nothing was written: the browser refuses before the first byte.
+    giveUpOnSavedDrive();
+    emit({ type: "drive", side });
+    const picked = await waitFor<DriveLike>({ type: "pick-drive", side }, signal);
+    emit({ type: "drive-done", side });
+    emit({ type: "step", step: `flash-${side}`, state: "active", detail: "Copying firmware" });
+    await copyTo({ drive: picked, picked: true }, side, data, emit, signal);
   }
 
   async function copyFirmware(d: DriveLike, side: Side, data: Uint8Array) {
@@ -262,10 +300,10 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       emit({ type: "manual", side, reason: "no-autoflash" });
     }
 
-    const d = ready ?? (await findDrive(side, !!found, emit, signal));
+    const target = ready ? { drive: ready, picked: false } : await findDrive(side, !!found, emit, signal);
     if (!found && !ready) emit({ type: "manual-done", side });
     emit({ type: "step", step, state: "active", detail: "Copying firmware" });
-    await copyFirmware(d, side, build[side]);
+    await copyTo(target, side, build[side], emit, signal);
     emit({ type: "step", step, state: "active", detail: "Restarting" });
 
     // A half that had no Tandem port comes back with one the browser hasn't
@@ -296,7 +334,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     // showing already. Both halves' drives look the same, so it only counts
     // when the other half is plainly running Tandem firmware.
     let waiting: { side: Side; drive: DriveLike } | null = null;
-    if (drive && (await isUpdateDrive(drive))) {
+    if (drive && reuseDrive && (await isUpdateDrive(drive))) {
       const silent = SIDES.filter((s) => !d[s].autoflash);
       if (silent.length !== 1) {
         throw new Error("One half is already in update mode, and Tandem can't tell which. Press that half's reset button once so it restarts, then update again.");
@@ -366,8 +404,10 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
         if (!(await isUpdateDrive(picked))) {
           throw new Error(`"${picked.name}" isn't a keyboard half's update drive. Choose the drive named ADV360PRO.`);
         }
-        drive = picked;
-        await deps.saveDrive?.(picked).catch(() => {});
+        if (reuseDrive) {
+          drive = picked;
+          await keepDrive?.(picked).catch(() => {});
+        }
         answer(action, picked);
       } else if (action.type === "grant-port") {
         if (!isWaiting(action)) return;

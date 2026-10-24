@@ -118,13 +118,36 @@ describe("Web Serial keyboard", () => {
   it("asks for each drive when the browser forgets the last one", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
     kb.allowAll();
-    kb.handlesSurviveRemount = false;
+    kb.remount = "fails";
     const { engine, events } = await setup(kb);
     const stop = autopilot(engine, events, kb);
     await engine.update(await newLayout(engine));
     expect(await until(done(events))).toMatchObject({ type: "done", checked: true });
     stop();
     expect(events.filter((e) => e.type === "drive").map((e) => "side" in e && e.side)).toEqual(["right", "left"]);
+  });
+
+  it("asks for the drive again when the browser won't write through the saved one", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowAll();
+    kb.remount = "read-only";
+    const { engine, events } = await setup(kb);
+    let stop = autopilot(engine, events, kb);
+    await engine.update(await newLayout(engine));
+    expect(await until(done(events))).toMatchObject({ type: "done", checked: true });
+    stop();
+    // The left half's drive is a new mount, so the saved handle failed once, then the user picked it.
+    expect(events.filter((e) => e.type === "drive").map((e) => "side" in e && e.side)).toEqual(["right", "left"]);
+    expect(kb.refusedWrites).toBe(1);
+
+    // Next time Tandem asks straight away instead of trying the saved drive.
+    events.length = 0;
+    stop = autopilot(engine, events, kb);
+    await engine.update();
+    expect(await until(done(events))).toMatchObject({ type: "done", checked: true });
+    stop();
+    expect(events.filter((e) => e.type === "drive").map((e) => "side" in e && e.side)).toEqual(["right", "left"]);
+    expect(kb.refusedWrites).toBe(1);
   });
 
   it("sets up halves without Tandem firmware: key combo, drive, then the new port", async () => {

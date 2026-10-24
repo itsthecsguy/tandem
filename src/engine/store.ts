@@ -168,6 +168,19 @@ export async function loadDrive<T>(): Promise<T | null> {
   return ((await done(d.transaction("handles").objectStore("handles").get("drive"))) as T | undefined) ?? null;
 }
 
+/**
+ * Whether reusing the saved drive works in this browser. Chrome on macOS lets
+ * a saved handle read the drive after it remounts but refuses to write
+ * through it, so after one refusal Tandem stops trying.
+ */
+export function loadDriveReuse(): boolean {
+  return read("tandem.driveReuse") !== "off";
+}
+
+export function saveDriveReuse(on: boolean) {
+  write("tandem.driveReuse", on ? null : "off");
+}
+
 export async function saveDrive(handle: unknown): Promise<void> {
   const d = await db();
   if (!d) {

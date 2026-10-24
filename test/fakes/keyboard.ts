@@ -134,10 +134,14 @@ export class FakeDrive implements DriveLike {
     private mount: number,
   ) {}
 
+  /** A handle from an earlier mount, which browsers treat differently. */
+  private get stale() {
+    return this.mount !== this.keyboard.mountCount;
+  }
+
   private half(): FakeHalf {
     const half = this.keyboard.mounted;
-    // A handle from an earlier mount only works if the browser keeps handles across mounts.
-    if (!half || (!this.keyboard.handlesSurviveRemount && this.mount !== this.keyboard.mountCount)) throw gone("The drive");
+    if (!half || (this.stale && this.keyboard.remount === "fails")) throw gone("The drive");
     return half;
   }
 
@@ -160,7 +164,22 @@ export class FakeDrive implements DriveLike {
     if (!options?.create) throw gone(name);
     return {
       getFile: async () => ({ text: async () => "" }),
-      createWritable: async () => ({
+      createWritable: async () => {
+        // Chrome on macOS reads through a stale handle but won't write.
+        if (this.stale && this.keyboard.remount === "read-only") {
+          this.keyboard.refusedWrites++;
+          throw new DOMException(
+            "An operation that depends on state cached in an interface object was made but the state had changed since it was read from disk.",
+            "InvalidStateError",
+          );
+        }
+        return this.writable(half);
+      },
+    };
+  }
+
+  private writable(half: FakeHalf) {
+    return {
         write: async (data: Uint8Array) => {
           // The bootloader restarts as soon as it has the last block.
           setTimeout(() => half.takeFirmware(data), 5);
@@ -169,7 +188,6 @@ export class FakeDrive implements DriveLike {
           await new Promise((r) => setTimeout(r, 10));
           throw gone("The file");
         },
-      }),
     };
   }
 }
@@ -186,8 +204,9 @@ export class FakeKeyboard implements SerialLike {
   readonly left: FakeHalf;
   readonly right: FakeHalf;
   readonly allowed = new Set<FakePort>();
-  /** Whether a drive handle from one update mode still works the next time. */
-  handlesSurviveRemount = true;
+  /** What a drive handle from an earlier update mode can still do. */
+  remount: "works" | "fails" | "read-only" = "works";
+  refusedWrites = 0;
   mounted: FakeHalf | null = null;
   mountCount = 0;
   pickerOpened = 0;
