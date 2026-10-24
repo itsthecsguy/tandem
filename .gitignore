@@ -8,3 +8,6 @@ helper/vendor/zmk-studio-client.js
 
 # Local Worker settings, including the OAuth app secret. Never commit.
 .dev.vars
+
+# Wrangler's local dev state: request traces and build output.
+.wrangler/
