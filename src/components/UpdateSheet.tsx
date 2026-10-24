@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import type { JobAction, Keymap, LayoutKey, Side, StepState } from "../../shared/types";
 import { api } from "../api";
 import { type Combo, bootloaderCombo } from "../lib/guide";
-import { type HandSteps, type JobView, type Mark, STEP_ORDER, STEP_TITLES } from "../lib/job";
+import { type HandSteps, type JobView, type Mark, STEP_TITLES, stepOrder } from "../lib/job";
 import { GitHubMark } from "./GitHubMark";
 import { Keyboard } from "./Keyboard";
 
@@ -26,18 +26,22 @@ function StepIcon({ state }: { state: StepState }) {
 const HALF: Record<Side, string> = { left: "left half", right: "right half" };
 const Half: Record<Side, string> = { left: "Left half", right: "Right half" };
 
-/** How Chrome's port list names each half's Tandem port. */
-const PORT_NAME: Record<Side, string> = { left: "Adv360 Pro", right: "Adv360 Pro rt" };
-
 type Act = (a: JobAction) => void;
 
 /**
- * The first-time setup's steps in the order they come: each half's update
- * mode, right half first, then both halves' new ports at the end.
+ * The first-time setup's steps in the order they come: the left half by key
+ * combo, then the right half, which Tandem restarts through the left one.
  */
 function SetupChecklist({ hands, combos }: { hands: Record<Side, HandSteps>; combos: Record<Side, Combo | null> }) {
   const browser = api.caps.engine === "browser";
-  const item = (side: Side, key: keyof HandSteps, label: string) => (
+  const keysLabel = (side: Side) => {
+    const pressKeys = combos[side] ? "Press 2 keys" : "Press reset twice";
+    if (hands[side].keysBy === "you") return pressKeys;
+    if (hands[side].keysBy === "tandem") return "Restarted by Tandem";
+    // In the browser, the left half's new firmware restarts the right half.
+    return browser && side === "right" ? "Restarts by itself" : pressKeys;
+  };
+  const item = (side: Side, key: "keys" | "allow", label: string) => (
     <li key={`${side}-${key}`} className={`is-${hands[side][key]}`}>
       <MarkIcon mark={hands[side][key]} />
       {label}
@@ -45,24 +49,15 @@ function SetupChecklist({ hands, combos }: { hands: Record<Side, HandSteps>; com
   );
   return (
     <div className="checklist" aria-label="Your part of the setup">
-      {(["right", "left"] as Side[]).map((side) => (
+      {(["left", "right"] as Side[]).map((side) => (
         <div key={side} className="checklist__half">
           <span className="checklist__name">{Half[side]}</span>
           <ol>
-            {item(side, "keys", combos[side] ? "Press 2 keys" : "Press reset twice")}
+            {item(side, "keys", keysLabel(side))}
             {browser && item(side, "allow", "Connect ADV360PRO")}
           </ol>
         </div>
       ))}
-      {browser && (
-        <div className="checklist__half checklist__last">
-          <span className="checklist__name">Last step, once both halves have the firmware</span>
-          <ol>
-            {item("right", "port", `Connect ${PORT_NAME.right}`)}
-            {item("left", "port", `Connect ${PORT_NAME.left}`)}
-          </ol>
-        </div>
-      )}
     </div>
   );
 }
@@ -299,11 +294,11 @@ function GrantPortPrompt({
         : "That was the left half's ZMK Studio port, which Tandem doesn't update through."
     : before
       ? `This browser can't see the ${HALF[side]} yet. Connect it once, and Tandem restarts the half by itself, with no keys to press.`
-      : `ADV360PRO was the ${HALF[side]} in update mode. Running Tandem firmware, it shows up to Chrome as a different device, and Chrome asks once before Tandem may use it. After this, Tandem restarts the halves by itself for every update.`;
+      : `ADV360PRO was the ${HALF[side]} in update mode. Running Tandem firmware, it shows up to Chrome as a different device, and Chrome asks once before Tandem may use it. ${side === "left" ? "Tandem restarts both halves through it" : "After this, Tandem restarts the halves by itself"} for every update.`;
   return (
     <div className="guide">
       <div className="guide__head">
-        <span className="guide__badge">{before ? `${Half[side]} · once in this browser` : "Last step"}</span>
+        <span className="guide__badge">{before ? `${Half[side]} · once in this browser` : Half[side]}</span>
         <h3>{heading}</h3>
         <p>{why}</p>
       </div>
@@ -371,7 +366,11 @@ function SetupWait({ view }: { view: JobView }) {
       ? `Sending firmware to the ${HALF[flashing]}. Keep it plugged in.`
       : detail === "Restarting"
         ? `The ${HALF[flashing]} is restarting with Tandem firmware.`
-        : null;
+        : detail.startsWith("Waiting for it to connect")
+          ? `Waiting for the ${HALF[flashing]} to connect to the left half.`
+          : detail.startsWith("Restarting into update mode")
+            ? `Tandem is restarting the ${HALF[flashing]} into update mode. No keys needed.`
+            : null;
     return text ? (
       <p className="setup-wait">
         <Loader2 size={14} className="spin" /> {text}
@@ -497,7 +496,7 @@ export function UpdateProgress({
       )}
 
       <ol className="steps">
-        {STEP_ORDER.map((id) => {
+        {stepOrder(view).map((id) => {
           const step = view.steps[id];
           return (
             <li key={id} className={`step step--${step.state}`}>

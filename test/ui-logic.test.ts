@@ -74,8 +74,8 @@ describe("viewJob's setup checklist", () => {
       { type: "update-port", side: "right" },
     ]);
     expect(v.setup).toBe(true);
-    expect(v.hands.right).toEqual({ keys: "now", allow: "now", port: "todo" });
-    expect(v.hands.left).toEqual({ keys: "todo", allow: "todo", port: "todo" });
+    expect(v.hands.right).toMatchObject({ keys: "now", allow: "now", port: "todo" });
+    expect(v.hands.left).toMatchObject({ keys: "todo", allow: "todo", port: "todo" });
 
     const next = view([
       { type: "manual", side: "right", reason: "no-autoflash" },
@@ -84,7 +84,7 @@ describe("viewJob's setup checklist", () => {
       { type: "manual-done", side: "right" },
       { type: "grant-port", side: "right" },
     ]);
-    expect(next.hands.right).toEqual({ keys: "done", allow: "done", port: "now" });
+    expect(next.hands.right).toMatchObject({ keys: "done", allow: "done", port: "now" });
   });
 
   it("moves the finished steps to the half that went into update mode instead", () => {
@@ -106,8 +106,19 @@ describe("viewJob's setup checklist", () => {
       { type: "manual", side: "left", reason: "no-autoflash" },
       { type: "error", message: "Cancelled" },
     ]);
-    expect(v.hands.right).toEqual({ keys: "done", allow: "done", port: "done" });
+    expect(v.hands.right).toMatchObject({ keys: "done", allow: "done", port: "done" });
     expect(v.hands.left.keys).toBe("todo");
+  });
+
+  it("says when Tandem, not the user, put a half in update mode", () => {
+    const v = view([
+      { type: "manual", side: "left", reason: "no-autoflash" },
+      { type: "manual-done", side: "left" },
+      { type: "step", step: "flash-right", state: "active", detail: "Restarting into update mode through the left half" },
+      { type: "update-port", side: "right" },
+    ]);
+    expect(v.hands.left).toMatchObject({ keys: "done", keysBy: "you" });
+    expect(v.hands.right).toMatchObject({ keys: "done", keysBy: "tandem", allow: "now" });
   });
 
   it("leaves a freshly flashed half's new port for the end", () => {
@@ -118,6 +129,6 @@ describe("viewJob's setup checklist", () => {
       { type: "manual-done", side: "right" },
       { type: "step", step: "flash-right", state: "done", detail: "Firmware sent" },
     ]);
-    expect(v.hands.right).toEqual({ keys: "done", allow: "done", port: "todo" });
+    expect(v.hands.right).toMatchObject({ keys: "done", allow: "done", port: "todo" });
   });
 });

@@ -18,13 +18,15 @@ export type Mark = "todo" | "now" | "done";
 export interface HandSteps {
   /** Put the half in update mode with its key combo. */
   keys: Mark;
+  /** Who put it in update mode: the user's key combo, or Tandem through the other half. */
+  keysBy: "you" | "tandem" | null;
   /** Connect its update port, ADV360PRO, in Chrome's list. */
   allow: Mark;
   /** Connect its new Tandem port in Chrome's list, once both halves are flashed. */
   port: Mark;
 }
 
-const fresh = (): HandSteps => ({ keys: "todo", allow: "todo", port: "todo" });
+const fresh = (): HandSteps => ({ keys: "todo", keysBy: null, allow: "todo", port: "todo" });
 
 export interface JobView {
   steps: Record<StepId, { state: StepState; detail?: string }>;
@@ -40,6 +42,8 @@ export interface JobView {
   hands: Record<Side, HandSteps>;
   /** The key combo landed on the other half, so Tandem updates that one first. */
   switched: { from: Side; to: Side } | null;
+  /** The half whose update started first. Setup starts with the left half. */
+  firstHalf: Side | null;
   /** This browser can't reach the keyboard: the files to copy by hand. */
   manualFlash: { left: string; right: string } | null;
   logs: string[];
@@ -64,6 +68,7 @@ export function viewJob(job: JobSnapshot): JobView {
     grantPort: null,
     hands: { left: fresh(), right: fresh() },
     switched: null,
+    firstHalf: null,
     manualFlash: null,
     logs: [],
     runUrl: null,
@@ -79,11 +84,18 @@ export function viewJob(job: JobSnapshot): JobView {
       case "step":
         view.steps[e.step] = { state: e.state, detail: e.detail };
         if (e.step === "prepare" && e.state === "done") view.plugIn = null;
-        if ((e.step === "flash-left" || e.step === "flash-right") && e.state === "done") {
-          // A half on its first Tandem firmware is done flashing before its new port is connected.
+        if (e.step === "flash-left" || e.step === "flash-right") {
           const side = e.step === "flash-left" ? "left" : "right";
-          const answered = !!e.detail?.startsWith("Running");
-          view.hands[side] = { keys: "done", allow: "done", port: answered ? "done" : view.hands[side].port };
+          if (e.state === "active") view.firstHalf ??= side;
+          const hands = view.hands[side];
+          if (e.state === "active" && e.detail?.startsWith("Restarting into update mode") && hands.keys !== "done") {
+            view.hands[side] = { ...hands, keys: "done", keysBy: "tandem" };
+          }
+          if (e.state === "done") {
+            // A half on its first Tandem firmware is done flashing before its new port is connected.
+            const answered = !!e.detail?.startsWith("Running");
+            view.hands[side] = { ...view.hands[side], keys: "done", allow: "done", port: answered ? "done" : hands.port };
+          }
         }
         break;
       case "log":
@@ -95,6 +107,7 @@ export function viewJob(job: JobSnapshot): JobView {
       case "manual":
         view.manual = { side: e.side, reason: e.reason };
         view.hands[e.side].keys = "now";
+        view.hands[e.side].keysBy = "you";
         view.switched = null;
         if (e.reason === "no-autoflash") view.setup = true;
         break;
@@ -104,7 +117,7 @@ export function viewJob(job: JobSnapshot): JobView {
         break;
       case "switched":
         view.switched = { from: e.from, to: e.to };
-        view.hands[e.to] = { ...view.hands[e.to], keys: "done", allow: "done" };
+        view.hands[e.to] = { ...view.hands[e.to], keys: "done", keysBy: "you", allow: "done" };
         view.hands[e.from] = { ...view.hands[e.from], keys: "todo", allow: "todo" };
         break;
       case "plug-in":
@@ -166,4 +179,10 @@ export function viewJob(job: JobSnapshot): JobView {
     }
   }
   return view;
+}
+
+/** The steps in the order this update takes them. */
+export function stepOrder(view: JobView): StepId[] {
+  if (view.firstHalf !== "left") return STEP_ORDER;
+  return STEP_ORDER.map((id) => (id === "flash-right" ? "flash-left" : id === "flash-left" ? "flash-right" : id));
 }

@@ -39,6 +39,8 @@ export interface TandemInfo {
   name: string;
   build: string;
   repo?: string;
+  /** Left half, protocol 3: whether the right half is connected to it. */
+  peripheral?: boolean;
 }
 
 const locks = new WeakMap<PortLike, Promise<unknown>>();
@@ -139,6 +141,36 @@ export async function askInfo(port: PortLike, ms = 700): Promise<TandemInfo | nu
     });
   } catch {
     return null;
+  }
+}
+
+/**
+ * Asks the left half to restart the right half into update mode over the
+ * split link. Needs Tandem protocol 3. Says whether the left half sent it.
+ */
+export async function bootRightViaLeft(port: PortLike, ms = 1500): Promise<boolean> {
+  try {
+    return await withPort(port, 115200, async (p) => {
+      await send(p, "\nboot right\n");
+      let ok = false;
+      await readUntil(p, ms, (bytes) => {
+        const line = new TextDecoder()
+          .decode(bytes)
+          .split("\n")
+          .slice(0, -1)
+          .find((l) => l.includes('"boot":"right"'));
+        if (!line) return false;
+        try {
+          ok = JSON.parse(line).ok === true;
+        } catch {
+          // Not JSON after all.
+        }
+        return true;
+      });
+      return ok;
+    });
+  } catch {
+    return false;
   }
 }
 

@@ -7,7 +7,8 @@
 //
 // Flashing goes right half first, as the helper does. Each half restarts into
 // update mode by itself if it runs Tandem firmware, or with its key combo if
-// not. In update mode its bootloader opens a serial port, and Tandem sends the
+// not. The right half needs no port of its own: the left half, on Tandem
+// protocol 3, restarts it over the split link and says when it's back. In update mode its bootloader opens a serial port, and Tandem sends the
 // firmware over it (see dfu.ts). Chrome asks once per half before a page may
 // open that port and remembers the answer, so later updates need no clicks.
 // The bootloader's drive is the fallback. After flashing, the half must come
@@ -21,8 +22,18 @@ import { KINESIS_LAYOUT } from "./kinesis";
 import { manualFlash } from "./manual";
 import { answer, isWaiting, waitFor } from "./prompts";
 import { DFU_TIMING, type DfuTiming, dfuFlash } from "./dfu";
-import { BOOTLOADER, KINESIS_VID, type PortLike, type SerialLike, type TandemInfo, askInfo, readTandemKeymap, restartToBootloader } from "./serial";
-import { loadDrive, loadDriveReuse, saveDrive, saveDriveReuse } from "./store";
+import {
+  BOOTLOADER,
+  KINESIS_VID,
+  type PortLike,
+  type SerialLike,
+  type TandemInfo,
+  askInfo,
+  bootRightViaLeft,
+  readTandemKeymap,
+  restartToBootloader,
+} from "./serial";
+import { loadDrive, loadDriveReuse, loadRightBuild, saveDrive, saveDriveReuse, saveRightBuild } from "./store";
 import { uf2ToImage } from "./uf2";
 import { sleep, withTimeout } from "./util";
 import { parseKeymap, toKeymap } from "../../shared/keymap";
@@ -45,6 +56,8 @@ export interface Deps {
   saveDrive?: (drive: DriveLike | null) => Promise<void>;
   /** Whether trying the saved drive again is worth it in this browser. */
   driveReuse?: { load(): boolean; save(on: boolean): void };
+  /** The last build sent to the right half through the left half. */
+  rightBuild?: { load(): string | null; save(build: string): void };
   /** How long to wait for things: the saved drive, a restarting half, its update port. */
   timing?: Partial<Timing>;
 }
@@ -86,6 +99,7 @@ function browserDeps(): Deps | null {
     loadDrive: () => loadDrive<DriveLike>(),
     saveDrive: (drive) => saveDrive(drive),
     driveReuse: { load: loadDriveReuse, save: saveDriveReuse },
+    rightBuild: { load: loadRightBuild, save: saveRightBuild },
   };
 }
 
@@ -101,6 +115,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
   const known = new Map<PortLike, { info: TandemInfo | null; at: number }>();
   const busy = new Set<PortLike>();
   const watchers = new Set<(d: DevicesStatus) => void>();
+  let rightBuild = deps.rightBuild?.load() ?? null;
   let devices = compute();
   let last = JSON.stringify(devices);
   let drive: DriveLike | null = null;
@@ -121,6 +136,36 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     return null;
   }
 
+  /** The left half's Tandem port, when its firmware can restart the right half. */
+  function relayPort(): [PortLike, TandemInfo] | null {
+    const left = tandemPort("left");
+    return left && left[1].tandem >= 3 ? left : null;
+  }
+
+  /** Asks the left half again, for whether the right half is connected to it now. */
+  async function leftInfo(): Promise<TandemInfo | null> {
+    const left = relayPort();
+    if (!left) return null;
+    busy.add(left[0]);
+    try {
+      const info = await askInfo(left[0], timing.infoMs);
+      if (info) known.set(left[0], { info, at: Date.now() });
+      return info;
+    } finally {
+      busy.delete(left[0]);
+    }
+  }
+
+  /** Waits up to `ms` for the left half to say the right half is connected. */
+  async function rightBackViaLeft(ms: number, signal: AbortSignal): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if ((await leftInfo())?.peripheral) return true;
+      if (Date.now() >= deadline) return false;
+      await sleep(timing.pollMs, signal);
+    }
+  }
+
   function otherPorts(): PortLike[] {
     return [...known].filter(([, { info }]) => !info).map(([port]) => port);
   }
@@ -134,6 +179,12 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       }
       // Only the left half has a second port, for ZMK Studio.
       if (side === "left" && otherPorts().length) return { ...emptyHalf(side), mode: "app", otherPorts: otherPorts().map(() => "web-serial") };
+      // The right half, through the left half's firmware.
+      const left = side === "right" ? relayPort() : null;
+      if (left && left[1].peripheral !== false) {
+        const [, info] = left;
+        return { ...emptyHalf(side), mode: "app", autoflash: true, build: rightBuild ?? info.build, repo: info.repo || null, protocol: info.tandem, port: "left half" };
+      }
       return emptyHalf(side);
     };
     const left = half("left");
@@ -172,10 +223,13 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       for (const port of [...known.keys()]) if (!ports.includes(port)) known.delete(port);
       for (const port of ports) {
         const seen = known.get(port);
-        if (busy.has(port) || seen?.info) continue;
+        // The left half's answer includes whether the right half is connected,
+        // which changes without any port coming or going, so a forced look asks it again.
+        const relay = seen?.info?.role === "central" && seen.info.tandem >= 3;
+        if (busy.has(port) || (seen?.info && !(force && relay))) continue;
         if (seen && !force && Date.now() - seen.at < REASK_MS) continue;
         const info = seen ? await askInfo(port, timing.infoMs) : await probe(port);
-        known.set(port, { info, at: Date.now() });
+        known.set(port, { info: info ?? (relay ? seen.info : null), at: Date.now() });
       }
       devices = compute();
       const now = JSON.stringify({ ...devices, scannedAt: "" });
@@ -374,12 +428,29 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
   ): Promise<{ flashed: Side; checked: boolean; newPort: boolean }> {
     let step = `flash-${side}` as const;
     let found = ready ? null : tandemPort(side);
+    // Without a port of its own, the right half restarts through the left one,
+    // once the two are connected. That works whatever firmware the right half
+    // runs, as long as its keymap has &bootloader.
+    let viaLeft = false;
+    const relay = !ready && !found && side === "right" ? relayPort() : null;
+    if (relay) {
+      emit({ type: "step", step, state: "active", detail: "Waiting for it to connect to the left half" });
+      if ((await leftInfo())?.peripheral || (await rightBackViaLeft(timing.comebackMs, signal))) {
+        emit({ type: "step", step, state: "active", detail: "Restarting into update mode through the left half" });
+        busy.add(relay[0]);
+        try {
+          viaLeft = await bootRightViaLeft(relay[0]);
+        } finally {
+          busy.delete(relay[0]);
+        }
+      }
+    }
     // The browser can't see a port nobody allowed. When the other half
     // already ran Tandem firmware, this one probably does too, so ask for its
     // port before falling back to a key combo. Not during first-time setup,
     // when neither half had it.
     const other = side === "left" ? "right" : "left";
-    if (!ready && !found && tandemAtStart.includes(other)) {
+    if (!ready && !found && !viaLeft && tandemAtStart.includes(other)) {
       emit({ type: "step", step, state: "active", detail: "Waiting for its port" });
       emit({ type: "grant-port", side, before: true });
       const granted = await waitFor<boolean>({ type: "grant-port", side }, signal);
@@ -387,7 +458,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       if (granted) found = tandemPort(side) ?? ((await refresh(true)) && tandemPort(side));
     }
 
-    const byHand = !ready && !found;
+    const byHand = !ready && !found && !viaLeft;
     const thisWasUp = visible(side);
     const otherWasUp = visible(other);
     const otherTandem = tandemPort(other);
@@ -401,12 +472,14 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       } finally {
         busy.delete(found[0]);
       }
+    } else if (viaLeft) {
+      // Already restarting.
     } else {
       emit({ type: "step", step, state: "active", detail: "Waiting for update mode" });
       emit({ type: "manual", side, reason: "no-autoflash" });
     }
 
-    const method = ready ?? (await updateMethod(side, !!found, emit, signal));
+    const method = ready ?? (await updateMethod(side, !!found || viaLeft, emit, signal));
     let target = side;
     if (byHand) {
       // Both halves look the same in update mode. If the other half went
@@ -447,6 +520,15 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     // next half's.
     await waitForNoBootPort(timing.bootMs, signal);
 
+    if (viaLeft) {
+      // The bootloader checked the image before starting it. Seeing the right
+      // half reconnect to the left one says it's running.
+      const back = await rightBackViaLeft(timing.comebackMs, signal);
+      if (back) keepRightBuild(build.id);
+      emit({ type: "step", step, state: "done", detail: back ? `Running ${build.id}` : "Sent, but it hasn't reconnected to the left half" });
+      return { flashed: target, checked: back, newPort: false };
+    }
+
     // A half on its first Tandem firmware comes back with a port the browser
     // hasn't been allowed to open. The caller asks for it once every half is
     // flashed. Chrome may allow it already when it allowed another port of
@@ -462,6 +544,11 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       detail: back ? `Running ${build.id}` : newPort ? "Firmware sent" : "Copied, but the browser couldn't ask it",
     });
     return { flashed: target, checked: !!back, newPort };
+  }
+
+  function keepRightBuild(build: string) {
+    rightBuild = build;
+    deps!.rightBuild?.save(build);
   }
 
   /** Waits up to `ms` for any of `sides` to report the build. Returns the ones that did. */
@@ -484,7 +571,10 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
    */
   async function connectNewPorts(sides: Side[], build: Build, emit: Parameters<Flash>[1], signal: AbortSignal): Promise<Side[]> {
     await refresh(true);
-    let pending = sides.filter((s) => tandemPort(s)?.[1].build !== build.id);
+    // Left half first: on Tandem protocol 3 it can vouch for the right half,
+    // whose own port then isn't needed.
+    let pending = (["left", "right"] as Side[]).filter((s) => sides.includes(s) && tandemPort(s)?.[1].build !== build.id);
+    let relayTried = false;
     const done = (back: Side[]) => {
       for (const side of back) emit({ type: "step", step: `flash-${side}`, state: "done", detail: `Running ${build.id}` });
       pending = pending.filter((s) => !back.includes(s));
@@ -492,6 +582,15 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     done(sides.filter((s) => !pending.includes(s)));
     for (let misses = 0, missed = false, paired = false; pending.length && misses < 3; ) {
       const side = pending[0];
+      if (side === "right" && !relayTried && relayPort()) {
+        relayTried = true;
+        emit({ type: "step", step: "verify", state: "active", detail: "Checking the right half through the left half" });
+        if (await rightBackViaLeft(timing.comebackMs, signal)) {
+          keepRightBuild(build.id);
+          done(["right"]);
+          continue;
+        }
+      }
       emit({ type: "step", step: "verify", state: "active", detail: `Waiting for the ${side} half's new port` });
       emit({ type: "grant-port", side, retry: missed, ...(paired && { paired }), ...(side === "left" && { studioPaired: otherPorts().length > 0 }) });
       const granted = await waitFor<boolean | "paired">({ type: "grant-port", side }, signal);
@@ -539,7 +638,11 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     // so keep going until both are done. Each round needs the user's hands.
     const checked: Partial<Record<Side, boolean>> = {};
     const newPorts = new Set<Side>();
-    let todo = waiting ? [waiting.side, ...SIDES.filter((s) => s !== waiting!.side)] : SIDES;
+    // The right half goes first when something can restart it: its own port,
+    // or the left half's firmware. Otherwise the left half goes first, by key
+    // combo, so that its new firmware can restart the right half after.
+    const order: Side[] = tandemPort("right") || relayPort() ? ["right", "left"] : ["left", "right"];
+    let todo = waiting ? [waiting.side, ...order.filter((s) => s !== waiting!.side)] : order;
     for (let round = 0; todo.length; round++) {
       if (round >= 4) throw new Error(`The key combo kept putting the wrong half in update mode. Check which half you press it on, then update again.`);
       const side = todo[0];
@@ -549,6 +652,12 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       if (result.newPort) newPorts.add(result.flashed);
       else newPorts.delete(result.flashed);
       todo = todo.filter((s) => s !== result.flashed);
+      // The right half restarts through the left one, so the left half's new
+      // port can't wait for the end.
+      if (result.flashed === "left" && result.newPort && todo.includes("right")) {
+        checked.left = (await connectNewPorts(["left"], build, emit, signal)).includes("left");
+        newPorts.delete("left");
+      }
     }
     // New ports last, so setup goes right half, left half, then the ports,
     // instead of stopping between the halves to connect one.
@@ -559,6 +668,8 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     }
     const all = !!(checked.left && checked.right);
     emit({ type: "step", step: "verify", state: all ? "done" : "skipped", detail: all ? `Both halves run ${build.id}` : "The browser couldn't ask every half" });
+    // Show the right half's new build, which only the left half can vouch for.
+    await refresh(true).catch(() => {});
     return all;
   };
 

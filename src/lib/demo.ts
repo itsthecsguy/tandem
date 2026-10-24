@@ -1,9 +1,9 @@
 // Fake sessions, keyboards and update runs for reviewing the UI without
 // GitHub or a keyboard. Dev server only.
 //
-//   ?demo=walkthrough  first-time setup from stock firmware, played as you click
-//                      (&wrong=half: the first key combo lands on the left half;
-//                       &wrong=port: the first pick for the left half's port is ZMK Studio's)
+//   ?demo=walkthrough  first-time setup from stock firmware, played as you click: keys on the
+//                      left half, then Tandem restarts the right half through the left one
+//                      (&wrong=half: the first key combo lands on the right half)
 //   ?demo=intro        the setup screen before Start
 //   ?demo=repo, ?demo=install   onboarding's layout step
 //   ?demo=<scenario>   the update sheet frozen at one moment, from `scenarios` below
@@ -48,7 +48,17 @@ const rightConnected: JobEvent[] = [
 const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
   setup: {
     running: true,
-    events: [...base, { type: "step", step: "flash-right", state: "active", detail: "Waiting for update mode" }, { type: "manual", side: "right", reason: "no-autoflash" }],
+    events: [...base, { type: "step", step: "flash-left", state: "active", detail: "Waiting for update mode" }, { type: "manual", side: "left", reason: "no-autoflash" }],
+  },
+  relay: {
+    running: true,
+    events: [
+      ...base,
+      ...flashed("left"),
+      { type: "step", step: "flash-left", state: "done", detail: `Running ${BUILD}` },
+      { type: "step", step: "flash-right", state: "active", detail: "Restarting into update mode through the left half" },
+      { type: "update-port", side: "right" },
+    ],
   },
   auto: {
     running: true,
@@ -66,9 +76,9 @@ const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
     running: true,
     events: [
       ...base,
-      { type: "step", step: "flash-right", state: "active", detail: "Waiting for update mode" },
-      { type: "manual", side: "right", reason: "no-autoflash" },
-      { type: "update-port", side: "right" },
+      { type: "step", step: "flash-left", state: "active", detail: "Waiting for update mode" },
+      { type: "manual", side: "left", reason: "no-autoflash" },
+      { type: "update-port", side: "left" },
     ],
   },
   updateport: {
@@ -144,10 +154,12 @@ const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
     running: false,
     events: [
       ...base,
-      ...rightConnected,
-      { type: "grant-port", side: "left", studioPaired: true },
-      { type: "grant-port-done", side: "left" },
+      ...flashed("left"),
       { type: "step", step: "flash-left", state: "done", detail: `Running ${BUILD}` },
+      { type: "step", step: "flash-right", state: "active", detail: "Restarting into update mode through the left half" },
+      { type: "update-port", side: "right" },
+      { type: "update-port-done", side: "right" },
+      { type: "step", step: "flash-right", state: "done", detail: `Running ${BUILD}` },
       { type: "step", step: "verify", state: "done", detail: `Both halves run ${BUILD}` },
       { type: "done", build: BUILD, checked: true },
     ],
@@ -254,10 +266,27 @@ export function demoEngine(real: Engine): Engine {
   };
   const until = (action: JobAction["type"], side: Side) => new Promise<JobAction>((resolve) => (waiting = { action, side, resolve }));
 
-  /** One half, the way serial-keyboard.ts runs it. Returns the half it updated. */
-  async function half(side: Side, first: boolean): Promise<Side> {
+  /** Sends a half its firmware once it's in update mode. */
+  async function send(side: Side, answer: JobAction) {
     const step = `flash-${side}` as const;
-    const other: Side = side === "left" ? "right" : "left";
+    if (answer.type === "pick-drive") {
+      emit({ type: "step", step, state: "active", detail: "Copying firmware" });
+      await sleep(1500);
+    } else {
+      for (let pct = 0; pct <= 100; pct += 10) {
+        emit({ type: "step", step, state: "active", detail: `Sending firmware ${pct}%` });
+        await sleep(250);
+      }
+    }
+    emit({ type: "step", step, state: "active", detail: "Restarting" });
+    await sleep(1200);
+    emit({ type: "step", step, state: "done", detail: `Running ${BUILD}` });
+    setDevices(side === "left" ? devicesFor(tandemHalf("left"), devices.right) : devicesFor(devices.left, tandemHalf("right")));
+  }
+
+  /** A half by its key combo, the way serial-keyboard.ts runs it. Returns the half it updated. */
+  async function byHand(side: Side, first: boolean): Promise<Side> {
+    const step = `flash-${side}` as const;
     emit({ type: "step", step, state: "active", detail: "Waiting for update mode" });
     emit({ type: "manual", side, reason: "no-autoflash" });
     emit({ type: "update-port", side });
@@ -265,50 +294,25 @@ export function demoEngine(real: Engine): Engine {
     emit({ type: "update-port-done", side });
     emit({ type: "manual-done", side });
     let target = side;
-    if (first && wrong === "half" && side === "right") {
-      target = other;
+    if (first && wrong === "half" && side === "left") {
+      target = "right";
       emit({ type: "step", step, state: "pending", detail: "Next" });
-      emit({ type: "switched", from: side, to: other });
-      setDevices(devicesFor(emptyHalf("left"), devices.right));
+      emit({ type: "switched", from: side, to: target });
     }
-    const targetStep = `flash-${target}` as const;
-    if (answer.type === "pick-drive") {
-      emit({ type: "step", step: targetStep, state: "active", detail: "Copying firmware" });
-      await sleep(1500);
-    } else {
-      for (let pct = 0; pct <= 100; pct += 10) {
-        emit({ type: "step", step: targetStep, state: "active", detail: `Sending firmware ${pct}%` });
-        await sleep(250);
-      }
-    }
-    emit({ type: "step", step: targetStep, state: "active", detail: "Restarting" });
-    await sleep(1200);
-    emit({ type: "step", step: targetStep, state: "done", detail: "Firmware sent" });
+    await send(target, answer);
     return target;
   }
 
-  /** The last step: each half's new port, the way serial-keyboard.ts asks for them. */
-  async function connectPorts() {
-    let studioPaired = wrong !== "port";
-    for (const side of ["right", "left"] as Side[]) {
-      let skipped = false;
-      for (let missed = false; ; ) {
-        emit({ type: "step", step: "verify", state: "active", detail: `Waiting for the ${side} half's new port` });
-        emit({ type: "grant-port", side, retry: missed, ...(side === "left" && { studioPaired }) });
-        const reply = await until("grant-port", side);
-        emit({ type: "grant-port-done", side });
-        skipped = reply.type === "grant-port" && !!reply.skip;
-        if (skipped) break;
-        await sleep(600);
-        // With &wrong=port, the first pick for the left half is ZMK Studio's port, which Chrome then marks Paired.
-        missed = side === "left" && !studioPaired;
-        if (!missed) break;
-        studioPaired = true;
-      }
-      if (skipped) continue;
-      emit({ type: "step", step: `flash-${side}`, state: "done", detail: `Running ${BUILD}` });
-      setDevices(side === "left" ? devicesFor(tandemHalf("left"), devices.right) : devicesFor(devices.left, tandemHalf("right")));
-    }
+  /** The right half, restarted by the left half's new firmware. */
+  async function throughLeft() {
+    emit({ type: "step", step: "flash-right", state: "active", detail: "Waiting for it to connect to the left half" });
+    await sleep(1200);
+    emit({ type: "step", step: "flash-right", state: "active", detail: "Restarting into update mode through the left half" });
+    await sleep(1000);
+    emit({ type: "update-port", side: "right" });
+    const answer = await until("grant-update-port", "right");
+    emit({ type: "update-port-done", side: "right" });
+    await send("right", answer);
   }
 
   async function play() {
@@ -321,12 +325,9 @@ export function demoEngine(real: Engine): Engine {
     await sleep(600);
     emit({ type: "step", step: "download", state: "done", detail: "323 KB" });
     emit({ type: "step", step: "prepare", state: "done", detail: "Neither half runs Tandem firmware yet" });
-    let todo: Side[] = ["right", "left"];
-    for (let round = 0; todo.length; round++) {
-      const done = await half(todo[0], round === 0);
-      todo = todo.filter((s) => s !== done);
-    }
-    await connectPorts();
+    // With &wrong=half the right half gets its firmware by hand, and the left half comes after.
+    if ((await byHand("left", true)) === "right") await byHand("left", false);
+    else await throughLeft();
     emit({ type: "step", step: "verify", state: "done", detail: `Both halves run ${BUILD}` });
     emit({ type: "done", build: BUILD, checked: true });
   }

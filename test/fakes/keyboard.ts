@@ -41,6 +41,12 @@ export class FakePort implements PortLike {
           const command = pending.slice(0, i).trim();
           pending = pending.slice(i + 1);
           if (command === "info") this.controller?.enqueue(enc(`${JSON.stringify(this.half.info())}\n`));
+          if (command === "boot right" && this.half.side === "left" && this.half.protocol >= 3) {
+            const right = this.half.keyboard.right;
+            const ok = right.linked && right.mode === "app";
+            this.controller?.enqueue(enc(`{"tandem":3,"boot":"right","ok":${ok}}\n`));
+            if (ok) setTimeout(() => right.enterUpdateMode(), 20);
+          }
           if (command === "keymap" && this.half.protocol >= 2) {
             const body = enc(this.half.keymap);
             this.controller?.enqueue(enc(`{"tandem":2,"keymap":${body.length}}\n`));
@@ -146,7 +152,9 @@ export class FakeBootPort implements PortLike {
 export class FakeHalf {
   /** Tandem build ID, or null for firmware without Tandem. */
   build: string | null;
-  protocol = 2;
+  protocol = 3;
+  /** The right half's Bluetooth link to the left half. */
+  linked = true;
   mode: "app" | "update" = "app";
   keymap = "/ { keymap { compatible = \"zmk,keymap\"; }; };";
   restartsOnRequest = true;
@@ -170,7 +178,9 @@ export class FakeHalf {
   }
 
   info() {
-    return { tandem: this.protocol, role: this.side === "left" ? "central" : "peripheral", name: "Adv360 Pro", build: this.build, repo: "octocat/adv360" };
+    const right = this.keyboard.right;
+    const peripheral = this.side === "left" && this.protocol >= 3 ? { peripheral: right.linked && right.mode === "app" } : {};
+    return { tandem: this.protocol, role: this.side === "left" ? "central" : "peripheral", name: "Adv360 Pro", build: this.build, repo: "octocat/adv360", ...peripheral };
   }
 
   ports(): PortLike[] {
@@ -202,7 +212,7 @@ export class FakeHalf {
     const m = /^(left|right)-\w+:(\w+)/.exec(text);
     if (m && !this.rejectsFirmware) {
       this.build = m[2];
-      this.protocol = 2;
+      this.protocol = this.keyboard.newProtocol;
       // New Tandem firmware brings a new port, which nobody has allowed yet.
       this.tandemPort ??= new FakePort(this, "tandem");
     }
@@ -298,6 +308,13 @@ export class FakeKeyboard implements SerialLike {
   pickerOpened = 0;
   /** The next this many port picks land on a port that's already allowed, like a wrong pick in Chrome's list. */
   wrongPicks = 0;
+  /** The Tandem protocol that new firmware speaks. 3 lets the left half restart the right half. */
+  newProtocol = 3;
+  /**
+   * Chrome on macOS: allowing one port of a half allows its other ports too,
+   * since it matches the USB device, not the port.
+   */
+  allowsSiblings = false;
   /** The half whose port the user looks for in Chrome's list, by the name Tandem gave. Without it, the first new port. */
   lookingFor: "left" | "right" | null = null;
   private listeners: Record<string, (() => void)[]> = { connect: [], disconnect: [] };
@@ -333,8 +350,14 @@ export class FakeKeyboard implements SerialLike {
 
   // SerialLike
 
+  isAllowed(p: PortLike): boolean {
+    if (this.allowed.has(p)) return true;
+    if (!this.allowsSiblings || !(p instanceof FakePort)) return false;
+    return p.half.ports().some((q) => q !== p && q instanceof FakePort && this.allowed.has(q));
+  }
+
   async getPorts() {
-    return [...this.left.ports(), ...this.right.ports()].filter((p) => this.allowed.has(p));
+    return [...this.left.ports(), ...this.right.ports()].filter((p) => this.isAllowed(p));
   }
 
   async requestPort(options?: { filters?: { usbVendorId?: number; usbProductId?: number }[] }) {
@@ -344,13 +367,13 @@ export class FakeKeyboard implements SerialLike {
       options.filters.some((f) => (f.usbVendorId === undefined || f.usbVendorId === p.getInfo().usbVendorId) && (f.usbProductId === undefined || f.usbProductId === p.getInfo().usbProductId));
     const present = [...this.left.ports(), ...this.right.ports()].filter(matches);
     if (this.wrongPicks > 0) {
-      const paired = present.find((p) => this.allowed.has(p));
+      const paired = present.find((p) => this.isAllowed(p));
       if (paired) {
         this.wrongPicks--;
         return paired;
       }
     }
-    const fresh = present.filter((p) => !this.allowed.has(p));
+    const fresh = present.filter((p) => !this.isAllowed(p));
     const wanted = this.lookingFor && this[this.lookingFor].ports();
     const port = fresh.find((p) => wanted?.includes(p)) ?? fresh[0];
     if (!port) throw new DOMException("No port selected by the user.", "NotFoundError");

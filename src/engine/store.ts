@@ -189,3 +189,15 @@ export async function saveDrive(handle: unknown): Promise<void> {
   }
   await done(d.transaction("handles", "readwrite").objectStore("handles").put(handle, "drive"));
 }
+
+/**
+ * The last build sent to the right half through the left half. Tandem can't
+ * ask the right half itself without its own port, which it no longer needs.
+ */
+export function loadRightBuild(): string | null {
+  return read("tandem.rightBuild");
+}
+
+export function saveRightBuild(build: string) {
+  write("tandem.rightBuild", build);
+}

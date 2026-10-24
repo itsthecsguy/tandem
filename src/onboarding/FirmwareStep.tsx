@@ -191,19 +191,14 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
           <ol className="ob__plan">
             <li>
               <span>
-                <strong>Right half: press two keys, then connect ADV360PRO in Chrome.</strong> Tandem lights the keys up on a picture of your
+                <strong>Left half: press two keys, then connect ADV360PRO in Chrome.</strong> Tandem lights the keys up on a picture of your
                 layout, and Chrome's list has one entry. The firmware goes on as soon as you connect.
               </span>
             </li>
             <li>
               <span>
-                <strong>Left half: the same two steps.</strong>
-              </span>
-            </li>
-            <li>
-              <span>
-                <strong>Connect the new ports in Chrome.</strong> Once both halves have the firmware, Chrome asks once for each half's new
-                port, and Tandem names the entry to pick.
+                <strong>Right half: connect ADV360PRO in Chrome.</strong> No keys this time. The left half's new firmware restarts the
+                right half for you.
               </span>
             </li>
           </ol>

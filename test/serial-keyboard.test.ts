@@ -76,8 +76,8 @@ interface Pilot {
   skipPortFirst?: boolean;
   /** For these key combo requests, counted from 0, press the combo on the other half. */
   wrongHalf?: number[];
-  /** In Chrome's list, pick the first new port instead of the one Tandem names. */
-  anyPort?: boolean;
+  /** In Chrome's list, pick the other half's new port instead of the one Tandem names. */
+  pickOther?: boolean;
 }
 
 /** Plays the user: does what each prompt asks, as it comes. */
@@ -92,7 +92,7 @@ function autopilot(engine: Engine, events: JobEvent[], kb: FakeKeyboard, pilot: 
       if (e.type === "update-port") later(() => engine.act(pilot.preferDrive ? { type: "pick-drive", side: e.side } : { type: "grant-update-port", side: e.side }));
       if (e.type === "drive") later(() => engine.act({ type: "pick-drive", side: e.side }));
       if (e.type === "grant-port") {
-        kb.lookingFor = pilot.anyPort ? null : e.side;
+        kb.lookingFor = pilot.pickOther ? (e.side === "left" ? "right" : "left") : e.side;
         engine.act({ type: "grant-port", side: e.side, skip: !!(e.before && pilot.skipPortFirst) });
       }
     }
@@ -127,7 +127,7 @@ describe("Web Serial keyboard", () => {
     const { access } = await setup(kb);
     await until(() => access.devices().right.autoflash);
     const d = access.devices();
-    expect(d.left).toMatchObject({ mode: "app", autoflash: true, build: "old1234", protocol: 2, repo: "octocat/adv360" });
+    expect(d.left).toMatchObject({ mode: "app", autoflash: true, build: "old1234", protocol: 3, repo: "octocat/adv360" });
     expect(d.right).toMatchObject({ mode: "app", autoflash: true, build: "old1234" });
     expect(d.needsAccess).toBe(false);
   });
@@ -184,92 +184,125 @@ describe("Web Serial keyboard", () => {
     expect(sides(events, "update-port")).toEqual([]);
   });
 
-  it("sets up halves without Tandem firmware: key combo, update port, then the new port", async () => {
+  it("sets up a keyboard on stock firmware with keys on the left half only", async () => {
     // Kinesis's firmware: the right half has no port, the left only ZMK Studio's.
+    // Chrome on a Mac then allows the left half's new port along with Studio's.
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
     kb.allowAll();
+    kb.allowsSiblings = true;
     const { engine, access, events } = await setup(kb);
     await until(() => access.devices().left.mode === "app");
     expect(access.devices().left).toMatchObject({ autoflash: false, otherPorts: ["web-serial"] });
     expect(access.devices().right.mode).toBe("missing");
 
-    expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
-    expect(sides(events, "manual")).toEqual(["right", "left"]);
-    expect(sides(events, "update-port")).toEqual(["right", "left"]);
-    expect(sides(events, "grant-port")).toEqual(["right", "left"]);
-    // The new ports come last, after both halves have their firmware.
-    const lastFlash = events.findLastIndex((e) => e.type === "update-port-done");
-    expect(events.findIndex((e) => e.type === "grant-port")).toBeGreaterThan(lastFlash);
-    expect(events).not.toContainEqual(expect.objectContaining({ type: "grant-port", retry: true }));
+    const build = github.head("octocat", "adv360").slice(0, 7);
+    expect(await run(engine, events, kb, {}, false)).toEqual({ type: "done", build, checked: true });
+    // The left half goes first, by key combo. Its new firmware then restarts the right half.
+    expect(sides(events, "manual")).toEqual(["left"]);
+    expect(sides(events, "update-port")).toEqual(["left", "right"]);
+    expect(sides(events, "grant-port")).toEqual([]);
+    expect(events).toContainEqual({ type: "step", step: "flash-right", state: "active", detail: "Restarting into update mode through the left half" });
+    expect([kb.left.flashedWith, kb.right.flashedWith]).toEqual([`left-clique:${build}`, `right-clique:${build}`]);
     expect(kb.pickerOpened).toBe(0);
-    expect(access.devices().left.autoflash && access.devices().right.autoflash).toBe(true);
+    expect(access.devices().right).toMatchObject({ mode: "app", autoflash: true, build });
+  });
+
+  it("asks for the left half's new port before restarting the right half, when Chrome doesn't allow it on its own", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.allowAll();
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().left.mode === "app");
+    expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
+    expect(sides(events, "manual")).toEqual(["left"]);
+    expect(sides(events, "grant-port")).toEqual(["left"]);
+    const asked = events.findIndex((e) => e.type === "grant-port");
+    expect(asked).toBeLessThan(events.findIndex((e) => e.type === "update-port" && e.side === "right"));
+  });
+
+  it("restarts the right half through the left one when its own port isn't allowed", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowed.add(kb.left.tandemPort!);
+    kb.allowUpdatePorts();
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().right.autoflash);
+    const build = github.head("octocat", "adv360").slice(0, 7);
+    expect(await run(engine, events, kb)).toEqual({ type: "done", build, checked: true });
+    expect(events.some((e) => ["manual", "grant-port", "update-port", "drive"].includes(e.type))).toBe(false);
+    expect(kb.right.flashedWith).toBe(`right-clique:${build}`);
+    expect(access.devices().right).toMatchObject({ autoflash: true, build });
+  });
+
+  it("asks for the right half's port when it isn't connected to the left half", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowed.add(kb.left.tandemPort!);
+    kb.allowUpdatePorts();
+    kb.right.linked = false;
+    const { engine, events } = await setup(kb);
+    expect(await run(engine, events, kb)).toMatchObject({ type: "done", checked: true });
+    expect(events).toContainEqual({ type: "grant-port", side: "right", before: true });
+    expect(events.some((e) => e.type === "manual")).toBe(false);
   });
 
   it("knows at once when the pick is a port that was already connected", async () => {
+    // Tandem protocol 2, where each half's new port gets picked in Chrome's list.
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.newProtocol = 2;
     kb.allowAll();
     // newPortMs is long here, so only an answer that doesn't wait for it finishes in time.
     const { engine, access, events } = await setup(kb, undefined, undefined, { newPortMs: 3000 });
     await until(() => access.devices().left.mode === "app");
     kb.wrongPicks = 1;
     const asked: number[] = [];
-    engine.subscribe((e) => e.type === "job-event" && e.event.type === "grant-port" && e.event.side === "right" && asked.push(Date.now()));
+    engine.subscribe((e) => e.type === "job-event" && e.event.type === "grant-port" && e.event.side === "left" && asked.push(Date.now()));
     expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
-    expect(events).toContainEqual({ type: "grant-port", side: "right", retry: true, paired: true });
+    expect(events).toContainEqual({ type: "grant-port", side: "left", retry: true, paired: true, studioPaired: true });
     expect(asked).toHaveLength(2);
     expect(asked[1] - asked[0]).toBeLessThan(1000);
   });
 
   it("takes the other half's new port when that's the one picked", async () => {
+    // Protocol 2, and the first combo lands on the right half, so both new ports wait for the end.
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.newProtocol = 2;
     kb.allowAll();
     const { engine, access, events } = await setup(kb);
     await until(() => access.devices().left.mode === "app");
-    // Asked for the right half's port, the user picks the left half's first.
-    expect(await run(engine, events, kb, { anyPort: true }, false)).toMatchObject({ type: "done", checked: true });
-    expect(events.filter((e) => e.type === "grant-port")).toEqual([
-      { type: "grant-port", side: "right", retry: false },
-      { type: "grant-port", side: "right", retry: false },
+    // Asked for the left half's port, the user picks the right half's first.
+    expect(await run(engine, events, kb, { wrongHalf: [0], pickOther: true }, false)).toMatchObject({ type: "done", checked: true });
+    expect(events.filter((e) => e.type === "grant-port").map((e) => e.type === "grant-port" && [e.side, e.retry])).toEqual([
+      ["left", false],
+      ["left", false],
     ]);
   });
 
-  it("asks again when the user picks the wrong port in Chrome's list", async () => {
-    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
-    kb.allowAll();
-    kb.allowUpdatePorts();
-    const { engine, access, events } = await setup(kb);
-    await until(() => access.devices().left.mode === "app");
-    kb.wrongPicks = 1;
-    expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
-    expect(events).toContainEqual({ type: "grant-port", side: "right", retry: true, paired: true });
-    expect(access.devices().left.autoflash && access.devices().right.autoflash).toBe(true);
-  });
 
   it("updates the other half first when the key combo lands on it", async () => {
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
     kb.allowAll();
-    kb.allowUpdatePorts();
     const { engine, access, events } = await setup(kb);
     await until(() => access.devices().left.mode === "app");
     const end = await run(engine, events, kb, { wrongHalf: [0] }, false);
     const build = github.head("octocat", "adv360").slice(0, 7);
     expect(end).toEqual({ type: "done", build, checked: true });
-    expect(events).toContainEqual({ type: "switched", from: "right", to: "left" });
+    // Asked for the left half, the user put the right half in update mode. The
+    // left half's Studio port stayed up, which gives it away.
+    expect(events).toContainEqual({ type: "switched", from: "left", to: "right" });
     expect(kb.left.flashedWith).toBe(`left-clique:${build}`);
     expect(kb.right.flashedWith).toBe(`right-clique:${build}`);
-    expect(sides(events, "manual")).toEqual(["right", "right"]);
+    expect(sides(events, "manual")).toEqual(["left", "left"]);
   });
 
   it("updates a finished half again when the key combo lands on it, then asks for the other", async () => {
+    // Protocol 2, where the right half needs its own key combo too.
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.newProtocol = 2;
     kb.allowAll();
-    kb.allowUpdatePorts();
     const { engine, access, events } = await setup(kb);
     await until(() => access.devices().left.mode === "app");
-    // Right goes as asked. Then the combo meant for the left lands on the right.
+    // Left goes as asked. Then the combo meant for the right lands on the left.
     expect(await run(engine, events, kb, { wrongHalf: [1] }, false)).toMatchObject({ type: "done", checked: true });
-    expect(events).toContainEqual({ type: "switched", from: "left", to: "right" });
-    expect(sides(events, "manual")).toEqual(["right", "left", "left"]);
+    expect(events).toContainEqual({ type: "switched", from: "right", to: "left" });
+    expect(sides(events, "manual")).toEqual(["left", "right", "right"]);
   });
 
   it("copies to the drive instead when the user prefers", async () => {
@@ -336,7 +369,9 @@ describe("Web Serial keyboard", () => {
   });
 
   it("asks a port again when it didn't answer at first", async () => {
+    // Tandem protocol 2, before the left half could restart the right half.
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.left.protocol = kb.right.protocol = 2;
     kb.right.silentUntil = Date.now() + 400;
     kb.allowAll();
     kb.allowUpdatePorts();
@@ -349,8 +384,9 @@ describe("Web Serial keyboard", () => {
     expect(events.some((e) => e.type === "manual" || e.type === "grant-port")).toBe(false);
   });
 
-  it("asks for a half's port before a key combo when the other half runs Tandem", async () => {
+  it("asks for a half's port before a key combo when the other half runs Tandem protocol 2", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.left.protocol = kb.right.protocol = kb.newProtocol = 2;
     kb.allowed.add(kb.left.tandemPort!);
     kb.allowUpdatePorts();
     const { engine, events } = await setup(kb);
@@ -362,6 +398,7 @@ describe("Web Serial keyboard", () => {
 
   it("falls back to the key combo when there's no port to allow", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: null } });
+    kb.left.protocol = kb.newProtocol = 2;
     kb.allowAll();
     kb.allowUpdatePorts();
     const { engine, events } = await setup(kb);
