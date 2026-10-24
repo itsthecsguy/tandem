@@ -33,8 +33,27 @@ interface Repo {
 const text = (data: Uint8Array) => new TextDecoder().decode(data);
 const bytes = (s: string) => new TextEncoder().encode(s);
 
-/** A UF2 file that carries a build ID, so tests can tell builds apart. */
-export const fakeUf2 = (side: string, build: string) => bytes(`UF2\n${side}:${build}`);
+/** A real UF2 file whose firmware is just text with the build ID, so tests can tell builds apart. */
+export function fakeUf2(side: string, build: string): Uint8Array {
+  const payload = bytes(`${side}:${build}`);
+  const blocks = Math.ceil(payload.length / 256);
+  const out = new Uint8Array(blocks * 512);
+  const v = new DataView(out.buffer);
+  for (let i = 0; i < blocks; i++) {
+    const at = i * 512;
+    v.setUint32(at, 0x0a324655, true);
+    v.setUint32(at + 4, 0x9e5d5157, true);
+    v.setUint32(at + 8, 0x2000, true); // family ID present
+    v.setUint32(at + 12, 0x26000 + i * 256, true);
+    v.setUint32(at + 16, 256, true);
+    v.setUint32(at + 20, i, true);
+    v.setUint32(at + 24, blocks, true);
+    v.setUint32(at + 28, 0xada52840, true); // nRF52840
+    out.set(payload.subarray(i * 256, (i + 1) * 256), at + 32);
+    v.setUint32(at + 508, 0x0ab16f30, true);
+  }
+  return out;
+}
 
 export class FakeGitHub {
   login = "octocat";

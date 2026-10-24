@@ -23,7 +23,15 @@ function tandemRepo(): Record<string, string> {
   return files;
 }
 
-const TIMING = { savedDriveMs: 150, comebackMs: 600, newPortMs: 150, pollMs: 10, infoMs: 40, mountMs: 20 };
+const TIMING = {
+  savedDriveMs: 150,
+  comebackMs: 600,
+  newPortMs: 150,
+  pollMs: 10,
+  infoMs: 40,
+  bootMs: 100,
+  dfu: { pageEraseMs: 0, pageWriteMs: 0, ackMs: 300, minEraseMs: 0 },
+};
 
 let github: FakeGitHub;
 let restore: () => void;
@@ -60,27 +68,50 @@ async function until<T>(check: () => T | undefined | false | null, ms = 4000): P
   }
 }
 
-/** Plays the user: answers each request for a drive or a port as it comes. */
-function autopilot(engine: Engine, events: JobEvent[], kb: FakeKeyboard, options: { skipPortFirst?: boolean } = {}) {
+interface Pilot {
+  /** Choose the drive instead of allowing update ports. */
+  preferDrive?: boolean;
+  /** Turn down Tandem's offer to allow a port before a key combo. */
+  skipPortFirst?: boolean;
+  /** Press the key combo on this half, whichever half Tandem asks for. */
+  comboOn?: "left" | "right";
+}
+
+/** Plays the user: does what each prompt asks, as it comes. */
+function autopilot(engine: Engine, events: JobEvent[], kb: FakeKeyboard, pilot: Pilot = {}) {
   let seen = 0;
+  const later = (fn: () => unknown) => setTimeout(() => void Promise.resolve(fn()).catch(() => {}), 30);
   const timer = setInterval(() => {
     for (; seen < events.length; seen++) {
       const e = events[seen];
-      if (e.type === "manual") kb[e.side].pressCombo();
-      if (e.type === "drive") setTimeout(() => engine.act({ type: "pick-drive", side: e.side }).catch(() => {}), 30);
-      if (e.type === "grant-port") engine.act({ type: "grant-port", side: e.side, skip: !!(e.before && options.skipPortFirst) });
+      if (e.type === "manual") kb[pilot.comboOn ?? e.side].pressCombo();
+      if (e.type === "update-port") later(() => engine.act(pilot.preferDrive ? { type: "pick-drive", side: e.side } : { type: "grant-update-port", side: e.side }));
+      if (e.type === "drive") later(() => engine.act({ type: "pick-drive", side: e.side }));
+      if (e.type === "grant-port") engine.act({ type: "grant-port", side: e.side, skip: !!(e.before && pilot.skipPortFirst) });
     }
   }, 5);
   return () => clearInterval(timer);
 }
 
-const done = (events: JobEvent[]) => () => events.find((e) => e.type === "done" || e.type === "error");
-
-async function newLayout(engine: Engine) {
-  const { keymap } = await engine.state();
-  keymap.layers[0].bindings[15] = "&ltr 2 Q";
-  return keymap;
+/** Runs an update while the autopilot answers prompts. Without a layout change, it reflashes the current commit. */
+async function run(engine: Engine, events: JobEvent[], kb: FakeKeyboard, pilot: Pilot = {}, keymapChange = true) {
+  const stop = autopilot(engine, events, kb, pilot);
+  try {
+    if (keymapChange) {
+      const { keymap } = await engine.state();
+      keymap.layers[0].bindings[15] = keymap.layers[0].bindings[15] === "&ltr 2 Q" ? "&kp Q" : "&ltr 2 Q";
+      await engine.update(keymap);
+    } else {
+      github.build(github.head("octocat", "adv360"));
+      await engine.update();
+    }
+    return await until(() => events.find((e) => e.type === "done" || e.type === "error"), 6000);
+  } finally {
+    stop();
+  }
 }
+
+const sides = (events: JobEvent[], type: JobEvent["type"]) => events.filter((e) => e.type === type).map((e) => ("side" in e ? e.side : null));
 
 describe("Web Serial keyboard", () => {
   it("sees which halves run Tandem firmware", async () => {
@@ -94,63 +125,38 @@ describe("Web Serial keyboard", () => {
     expect(d.needsAccess).toBe(false);
   });
 
-  it("updates both halves, asking for the drive only once", async () => {
+  it("updates both halves over their update ports without a single click", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
     kb.allowAll();
+    kb.allowUpdatePorts();
     const { engine, events } = await setup(kb);
-    const stop = autopilot(engine, events, kb);
-    await engine.update(await newLayout(engine));
-    const end = await until(done(events));
-    stop();
+    const end = await run(engine, events, kb);
 
     const build = github.head("octocat", "adv360").slice(0, 7);
     expect(end).toEqual({ type: "done", build, checked: true });
     expect([kb.left.build, kb.right.build]).toEqual([build, build]);
-    expect(kb.right.flashedWith).toMatch(/^UF2\nright-clique:/);
-    expect(kb.left.flashedWith).toMatch(/^UF2\nleft-clique:/);
-    // The left half reused the drive the user picked for the right.
-    expect(events.filter((e) => e.type === "drive").map((e) => "side" in e && e.side)).toEqual(["right"]);
-    expect(kb.pickerOpened).toBe(1);
+    expect(kb.right.flashedWith).toBe(`right-clique:${build}`);
+    expect(kb.left.flashedWith).toBe(`left-clique:${build}`);
+    expect(events.some((e) => ["update-port", "drive", "manual", "grant-port"].includes(e.type))).toBe(false);
+    expect(kb.pickerOpened).toBe(0);
+    expect(events).toContainEqual(expect.objectContaining({ type: "step", step: "flash-right", detail: "Sending firmware 100%" }));
     const order = events.filter((e) => e.type === "step" && e.state === "done" && e.step.startsWith("flash-")).map((e) => e.type === "step" && e.step);
     expect(order).toEqual(["flash-right", "flash-left"]);
   });
 
-  it("asks for each drive when the browser forgets the last one", async () => {
+  it("asks once for each half's update port, then never again", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
     kb.allowAll();
-    kb.remount = "fails";
     const { engine, events } = await setup(kb);
-    const stop = autopilot(engine, events, kb);
-    await engine.update(await newLayout(engine));
-    expect(await until(done(events))).toMatchObject({ type: "done", checked: true });
-    stop();
-    expect(events.filter((e) => e.type === "drive").map((e) => "side" in e && e.side)).toEqual(["right", "left"]);
-  });
+    expect(await run(engine, events, kb)).toMatchObject({ type: "done", checked: true });
+    expect(sides(events, "update-port")).toEqual(["right", "left"]);
 
-  it("asks for the drive again when the browser won't write through the saved one", async () => {
-    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
-    kb.allowAll();
-    kb.remount = "read-only";
-    const { engine, events } = await setup(kb);
-    let stop = autopilot(engine, events, kb);
-    await engine.update(await newLayout(engine));
-    expect(await until(done(events))).toMatchObject({ type: "done", checked: true });
-    stop();
-    // The left half's drive is a new mount, so the saved handle failed once, then the user picked it.
-    expect(events.filter((e) => e.type === "drive").map((e) => "side" in e && e.side)).toEqual(["right", "left"]);
-    expect(kb.refusedWrites).toBe(1);
-
-    // Next time Tandem asks straight away instead of trying the saved drive.
     events.length = 0;
-    stop = autopilot(engine, events, kb);
-    await engine.update();
-    expect(await until(done(events))).toMatchObject({ type: "done", checked: true });
-    stop();
-    expect(events.filter((e) => e.type === "drive").map((e) => "side" in e && e.side)).toEqual(["right", "left"]);
-    expect(kb.refusedWrites).toBe(1);
+    expect(await run(engine, events, kb)).toMatchObject({ type: "done", checked: true });
+    expect(sides(events, "update-port")).toEqual([]);
   });
 
-  it("sets up halves without Tandem firmware: key combo, drive, then the new port", async () => {
+  it("sets up halves without Tandem firmware: key combo, update port, then the new port", async () => {
     // Kinesis's firmware: the right half has no port, the left only ZMK Studio's.
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
     kb.allowAll();
@@ -159,16 +165,60 @@ describe("Web Serial keyboard", () => {
     expect(access.devices().left).toMatchObject({ autoflash: false, otherPorts: ["web-serial"] });
     expect(access.devices().right.mode).toBe("missing");
 
-    const stop = autopilot(engine, events, kb);
-    github.build(github.head("octocat", "adv360"));
-    await engine.update();
-    const end = await until(done(events), 6000);
-    stop();
-
-    expect(end).toMatchObject({ type: "done", checked: true });
-    expect(events.filter((e) => e.type === "manual").map((e) => "side" in e && e.side)).toEqual(["right", "left"]);
-    expect(events.filter((e) => e.type === "grant-port").map((e) => "side" in e && e.side)).toEqual(["right", "left"]);
+    expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
+    expect(sides(events, "manual")).toEqual(["right", "left"]);
+    expect(sides(events, "update-port")).toEqual(["right", "left"]);
+    expect(sides(events, "grant-port")).toEqual(["right", "left"]);
+    expect(kb.pickerOpened).toBe(0);
     expect(access.devices().left.autoflash && access.devices().right.autoflash).toBe(true);
+  });
+
+  it("stops when the key combo puts the other half in update mode", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.allowAll();
+    kb.allowUpdatePorts();
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().left.mode === "app");
+    const end = await run(engine, events, kb, { comboOn: "left" }, false);
+    expect(end).toMatchObject({ type: "error", message: expect.stringMatching(/left half went into update mode instead of the right half/) });
+    expect(kb.left.flashedWith).toBeNull();
+    expect(kb.right.flashedWith).toBeNull();
+  });
+
+  it("copies to the drive instead when the user prefers", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowAll();
+    const { engine, events } = await setup(kb);
+    expect(await run(engine, events, kb, { preferDrive: true })).toMatchObject({ type: "done", checked: true });
+    expect(kb.right.flashedWith).toMatch(/^right-clique:/);
+    expect(kb.left.flashedWith).toMatch(/^left-clique:/);
+    expect(kb.pickerOpened).toBeGreaterThan(0);
+  });
+
+  it("asks for the drive again when the browser won't write through the saved one", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowAll();
+    kb.remount = "read-only";
+    const { engine, events } = await setup(kb, undefined, new FakeDrive(kb, 0));
+    expect(await run(engine, events, kb, { preferDrive: true })).toMatchObject({ type: "done", checked: true });
+    expect(kb.refusedWrites).toBe(1);
+    expect(sides(events, "drive")).toEqual(["right"]);
+
+    // Next time Tandem doesn't try the saved drive at all.
+    events.length = 0;
+    expect(await run(engine, events, kb, { preferDrive: true })).toMatchObject({ type: "done", checked: true });
+    expect(kb.refusedWrites).toBe(1);
+  });
+
+  it("falls back to the drive when the update port stops answering", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowAll();
+    kb.allowUpdatePorts();
+    kb.right.bootPort.silent = true;
+    const { engine, events } = await setup(kb);
+    expect(await run(engine, events, kb)).toMatchObject({ type: "done", checked: true });
+    expect(sides(events, "drive")).toEqual(["right"]);
+    expect(events).toContainEqual(expect.objectContaining({ step: "flash-right", detail: expect.stringMatching(/Sending over the update port failed/) }));
   });
 
   it("turns down a folder that isn't an update drive and keeps waiting", async () => {
@@ -176,24 +226,24 @@ describe("Web Serial keyboard", () => {
     kb.allowAll();
     let picks = 0;
     const { engine, events } = await setup(kb, () => (picks++ === 0 ? notADrive : new FakeDrive(kb, kb.mountCount)));
-    await engine.update(await newLayout(engine));
-    await until(() => events.find((e) => e.type === "drive"));
+    const { keymap } = await engine.state();
+    keymap.layers[0].bindings[15] = "&ltr 2 Q";
+    await engine.update(keymap);
+    await until(() => events.find((e) => e.type === "update-port"));
     await expect(engine.act({ type: "pick-drive", side: "right" })).rejects.toThrow(/isn't a keyboard half's update drive/);
     await engine.act({ type: "pick-drive", side: "right" });
     const stop = autopilot(engine, events, kb);
-    expect(await until(done(events))).toMatchObject({ type: "done", checked: true });
+    expect(await until(() => events.find((e) => e.type === "done" || e.type === "error"))).toMatchObject({ type: "done", checked: true });
     stop();
   });
 
   it("stops when a half comes back on the wrong build", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
     kb.allowAll();
+    kb.allowUpdatePorts();
     kb.right.rejectsFirmware = true;
     const { engine, events } = await setup(kb);
-    const stop = autopilot(engine, events, kb);
-    await engine.update(await newLayout(engine));
-    const end = await until(done(events));
-    stop();
+    const end = await run(engine, events, kb);
     expect(end).toMatchObject({ type: "error", message: expect.stringMatching(/right half is running build old1234/) });
     expect(kb.left.flashedWith).toBeNull();
   });
@@ -202,28 +252,22 @@ describe("Web Serial keyboard", () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
     kb.right.silentUntil = Date.now() + 400;
     kb.allowAll();
+    kb.allowUpdatePorts();
     const { engine, access, events } = await setup(kb);
     await until(() => access.devices().left.autoflash);
     expect(access.devices().right.autoflash).toBe(false);
 
     await new Promise((r) => setTimeout(r, 400));
-    const stop = autopilot(engine, events, kb);
-    await engine.update(await newLayout(engine));
-    const end = await until(done(events));
-    stop();
-    expect(end).toMatchObject({ type: "done", checked: true });
+    expect(await run(engine, events, kb)).toMatchObject({ type: "done", checked: true });
     expect(events.some((e) => e.type === "manual" || e.type === "grant-port")).toBe(false);
   });
 
   it("asks for a half's port before a key combo when the other half runs Tandem", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
     kb.allowed.add(kb.left.tandemPort!);
+    kb.allowUpdatePorts();
     const { engine, events } = await setup(kb);
-    const stop = autopilot(engine, events, kb);
-    await engine.update(await newLayout(engine));
-    const end = await until(done(events));
-    stop();
-    expect(end).toMatchObject({ type: "done", checked: true });
+    expect(await run(engine, events, kb)).toMatchObject({ type: "done", checked: true });
     expect(events).toContainEqual({ type: "grant-port", side: "right", before: true });
     expect(events.some((e) => e.type === "manual")).toBe(false);
     expect(events).toContainEqual({ type: "step", step: "flash-right", state: "active", detail: "Restarting into update mode" });
@@ -232,41 +276,32 @@ describe("Web Serial keyboard", () => {
   it("falls back to the key combo when there's no port to allow", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: null } });
     kb.allowAll();
+    kb.allowUpdatePorts();
     const { engine, events } = await setup(kb);
-    const stop = autopilot(engine, events, kb, { skipPortFirst: true });
-    github.build(github.head("octocat", "adv360"));
-    await engine.update();
-    const end = await until(done(events), 6000);
-    stop();
-    expect(end).toMatchObject({ type: "done", checked: true });
-    expect(events.filter((e) => e.type === "manual").map((e) => "side" in e && e.side)).toEqual(["right"]);
+    expect(await run(engine, events, kb, { skipPortFirst: true }, false)).toMatchObject({ type: "done", checked: true });
+    expect(sides(events, "manual")).toEqual(["right"]);
   });
 
   it("finishes a half that a reload left in update mode", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
     kb.allowAll();
-    const { engine, events } = await setup(kb, undefined, new FakeDrive(kb, 0));
+    kb.allowUpdatePorts();
+    const { engine, events } = await setup(kb);
     kb.right.enterUpdateMode();
-    await until(() => !kb.right.ports().length);
-    github.build(github.head("octocat", "adv360"));
-    const stop = autopilot(engine, events, kb);
-    await engine.update();
-    const end = await until(done(events));
-    stop();
-    expect(end).toMatchObject({ type: "done", checked: true });
+    await until(() => kb.right.mode === "update");
+    expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
     expect(events).toContainEqual({ type: "step", step: "flash-right", state: "active", detail: "Already in update mode" });
-    expect(events.some((e) => e.type === "drive" || e.type === "manual")).toBe(false);
-    expect(kb.pickerOpened).toBe(0);
+    expect(events.some((e) => ["update-port", "drive", "manual"].includes(e.type))).toBe(false);
   });
 
   it("won't guess which half is in update mode", async () => {
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
     kb.allowAll();
-    const { engine, events } = await setup(kb, undefined, new FakeDrive(kb, 0));
+    kb.allowUpdatePorts();
+    const { engine, events } = await setup(kb);
     kb.right.enterUpdateMode();
-    github.build(github.head("octocat", "adv360"));
-    await engine.update();
-    expect(await until(done(events))).toMatchObject({ type: "error", message: expect.stringMatching(/can't tell which/) });
+    const end = await run(engine, events, kb, {}, false);
+    expect(end).toMatchObject({ type: "error", message: expect.stringMatching(/can't tell which/) });
     expect(kb.right.flashedWith).toBeNull();
   });
 

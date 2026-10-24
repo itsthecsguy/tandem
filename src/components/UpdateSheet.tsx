@@ -39,6 +39,39 @@ function DriveButton({ side, onAct }: { side: Side; onAct: (a: JobAction) => voi
   );
 }
 
+/** One click in Chrome's list, once per half. After that, updates need no clicks. */
+function UpdatePortButtons({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
+  return (
+    <div className="drive-pick">
+      <div className="drive-pick--row drive-pick">
+        <button type="button" className="btn btn--primary" onClick={() => onAct({ type: "grant-update-port", side })}>
+          <Usb size={15} /> Allow ADV360PRO
+        </button>
+        <button type="button" className="btn btn--ghost" onClick={() => onAct({ type: "pick-drive", side })}>
+          <HardDrive size={15} /> Choose the drive instead
+        </button>
+      </div>
+      <p className="hint">
+        Chrome lists one entry, ADV360PRO. Select it and click Connect. Chrome remembers it, so later updates send the firmware with no
+        clicks at all.
+      </p>
+    </div>
+  );
+}
+
+function UpdatePortPrompt({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
+  return (
+    <div className="guide">
+      <div className="guide__head">
+        <span className="guide__badge">One-time step</span>
+        <h3>Allow the {sideName(side)} half's update port</h3>
+        <p>The {sideName(side)} half is in update mode. Tandem sends the firmware over its update port once the browser may open it.</p>
+      </div>
+      <UpdatePortButtons side={side} onAct={onAct} />
+    </div>
+  );
+}
+
 /** The browser can't see the drive until the user points at it. */
 function DrivePrompt({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
   return (
@@ -152,6 +185,7 @@ function ManualGuide({
   keymap,
   layout,
   onPickDrive,
+  onAllowPort,
 }: {
   side: Side;
   reason: "no-autoflash" | "no-response";
@@ -159,6 +193,8 @@ function ManualGuide({
   layout: LayoutKey[];
   /** In the browser, the user points Tandem at the drive once it appears. */
   onPickDrive?: (a: JobAction) => void;
+  /** In the browser, the user allows the half's update port once it appears. */
+  onAllowPort?: (a: JobAction) => void;
 }) {
   const combo = bootloaderCombo(side, keymap, layout);
 
@@ -198,9 +234,12 @@ function ManualGuide({
           <li>
             {combo ? "Or double-click" : "Double-click"} the reset button on the {sideName(side)} half.
           </li>
+          {onAllowPort && <li>A drive named ADV360PRO appears. Then allow its update port below.</li>}
         </ol>
       </div>
-      {onPickDrive ? (
+      {onAllowPort ? (
+        <UpdatePortButtons side={side} onAct={onAllowPort} />
+      ) : onPickDrive ? (
         <DriveButton side={side} onAct={onPickDrive} />
       ) : (
         <p className="guide__wait">
@@ -224,6 +263,7 @@ interface Props {
 /** Progress of an update: the steps, and any guide or notice the user needs. */
 export function UpdateProgress({ view, keymap, layout, onAct }: { view: JobView; keymap: Keymap; layout: LayoutKey[]; onAct: (a: JobAction) => void }) {
   const driveWithCombo = view.drive && view.manual?.side === view.drive;
+  const portWithCombo = view.updatePort && view.manual?.side === view.updatePort;
   return (
     <>
       <ol className="steps">
@@ -261,8 +301,10 @@ export function UpdateProgress({ view, keymap, layout, onAct }: { view: JobView;
           keymap={keymap}
           layout={layout}
           onPickDrive={driveWithCombo ? onAct : undefined}
+          onAllowPort={portWithCombo ? onAct : undefined}
         />
       )}
+      {view.updatePort && !portWithCombo && <UpdatePortPrompt side={view.updatePort} onAct={onAct} />}
       {view.drive && !driveWithCombo && <DrivePrompt side={view.drive} onAct={onAct} />}
       {view.grantPort && <GrantPortPrompt side={view.grantPort.side} before={view.grantPort.before} onAct={onAct} />}
       {view.manualFlash && <ManualFlashGuide files={view.manualFlash} keymap={keymap} layout={layout} onAct={onAct} />}

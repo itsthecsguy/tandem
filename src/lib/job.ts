@@ -18,6 +18,8 @@ export interface JobView {
   plugIn: Side | null;
   /** The browser needs the user to choose this half's drive. */
   drive: Side | null;
+  /** The browser needs the user's OK, once, to open this half's update port. */
+  updatePort: Side | null;
   /** The browser needs the user to allow this half's port, before or after flashing it. */
   grantPort: { side: Side; before: boolean } | null;
   /** This browser can't reach the keyboard: the files to copy by hand. */
@@ -40,6 +42,7 @@ export function viewJob(job: JobSnapshot): JobView {
     manual: null,
     plugIn: null,
     drive: null,
+    updatePort: null,
     grantPort: null,
     manualFlash: null,
     logs: [],
@@ -80,6 +83,13 @@ export function viewJob(job: JobSnapshot): JobView {
         if (view.drive === e.side) view.drive = null;
         if (view.manual?.side === e.side) view.manual = null;
         break;
+      case "update-port":
+        view.updatePort = e.side;
+        break;
+      case "update-port-done":
+        if (view.updatePort === e.side) view.updatePort = null;
+        if (view.manual?.side === e.side) view.manual = null;
+        break;
       case "grant-port":
         view.grantPort = { side: e.side, before: !!e.before };
         break;
@@ -97,6 +107,7 @@ export function viewJob(job: JobSnapshot): JobView {
         view.checked = e.checked;
         view.manual = null;
         view.drive = null;
+        view.updatePort = null;
         view.grantPort = null;
         break;
       case "error":
@@ -104,6 +115,7 @@ export function viewJob(job: JobSnapshot): JobView {
         view.manual = null;
         view.plugIn = null;
         view.drive = null;
+        view.updatePort = null;
         view.grantPort = null;
         view.manualFlash = null;
         for (const s of STEP_ORDER) if (view.steps[s].state === "active") view.steps[s].state = "error";

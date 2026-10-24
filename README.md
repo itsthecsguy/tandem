@@ -14,7 +14,7 @@ This is a prototype.
 4. Choose where your layout lives:
    - **A repo you have**, such as your fork of Kinesis's config. Tandem adds itself with one commit and keeps your keys as they are.
    - **A new repo.** Tandem creates one on your account from its [config template](https://github.com/itsthecsguy/tandem-config), starting from Kinesis's default layout or the one on your keyboard. It can be private.
-5. Install Tandem firmware once. GitHub builds it, you put each half in update mode with its key combo, and you point the browser at the drive that appears. After that, halves restart into update mode by themselves.
+5. Install Tandem firmware once. GitHub builds it, and for each half you press its key combo and allow its update port in Chrome's list. After that, an update is one click: the halves restart into update mode by themselves and Tandem sends the firmware over serial, with nothing to press or pick.
 
 Safari and Firefox can't talk to the keyboard. They can still edit the layout and build firmware, and an update ends with both files to copy onto the halves by hand.
 
@@ -22,8 +22,8 @@ Safari and Firefox can't talk to the keyboard. They can still edit the layout an
 
 1. **Commit.** Saving commits the keymap to your branch through GitHub's API. If the branch changed on GitHub since Tandem loaded it, Tandem reloads instead of overwriting. Layers you didn't edit keep their spacing.
 2. **Build.** The push starts your workflow. Tandem follows the job for the firmware it wants (Clique or plain) and downloads its artifact. Downloads are kept in the browser, so going back to a build skips GitHub. If a commit's push started no build, as with a repo just made from the template, Tandem starts one.
-3. **Restart.** Right half first, then left. A half running Tandem firmware restarts into update mode when Tandem opens its serial port at 1200 baud. A half on other firmware needs its key combo, which Tandem shows on your layout.
-4. **Copy.** The half shows up as a drive named ADV360PRO. The first time, you choose it in the browser's folder picker. The browser can keep that permission, so later updates try the same drive before asking.
+3. **Restart.** Right half first, then left. A half running Tandem firmware restarts into update mode when Tandem opens its serial port at 1200 baud. A half on other firmware needs its key combo, which Tandem shows on your layout. If a half can't be seen but the other one runs Tandem firmware, Tandem first asks you to allow its port, since that's one click and no keys.
+4. **Send.** In update mode, the half's bootloader opens a serial port of its own, listed as ADV360PRO. Tandem sends the firmware over it with the serial DFU protocol that Adafruit's nRF52 bootloader speaks, the same as `adafruit-nrfutil dfu serial`. Chrome asks once per half before a page may open that port, and remembers. If you'd rather not, or sending fails, the half's ADV360PRO drive works too: you choose it in the folder picker and Tandem copies the UF2 file.
 5. **Check.** Each half restarts and must report the new build. A half that just got Tandem firmware has a new serial port, so the browser asks you to allow it once.
 
 ## What it adds to your keyboard
@@ -108,7 +108,6 @@ To update the config template, edit `template/` and run `scripts/publish-templat
 
 ## Next
 
-- **No folder picker.** In update mode, the bootloader also has a serial port. If it takes firmware over serial from the browser, the copy step needs no picker at all.
 - **Narrower access.** A GitHub App could be limited to the user's one config repo, instead of an OAuth app that can see all of them.
 - **Module.** Publish `zmk-tandem` as its own repo and reference it from `west.yml`, so updating it is a one-line change.
 - **Faster builds.** A prebuilt image with ZMK and the toolchain inside skips fetching ZMK on every run.

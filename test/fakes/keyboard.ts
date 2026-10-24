@@ -1,10 +1,13 @@
 // A simulated Advantage 360 Pro for tests. Each half has Web Serial ports
-// that speak Tandem's protocol, restarts into update mode when its Tandem port
-// opens at 1200 baud, and takes new firmware when a UF2 is written to its
-// update drive. Ports only show up once "the user" has allowed them.
+// that speak Tandem's protocol, and restarts into update mode when its Tandem
+// port opens at 1200 baud. In update mode it has a drive that takes a UF2, and
+// a bootloader port that takes the same firmware over serial DFU. Ports only
+// show up once "the user" has allowed them.
 
+import { crc16 } from "../../src/engine/dfu";
 import type { DriveLike } from "../../src/engine/serial-keyboard";
 import type { PortLike, SerialLike } from "../../src/engine/serial";
+import { uf2ToImage } from "../../src/engine/uf2";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const gone = (what: string) => new DOMException(`${what} is gone`, "NotFoundError");
@@ -65,6 +68,81 @@ export class FakePort implements PortLike {
   async setSignals() {}
 }
 
+const u32 = (b: number[], at: number) => (b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24)) >>> 0;
+
+/** A half's bootloader port in update mode: SLIP-framed DFU packets, each acknowledged. */
+export class FakeBootPort implements PortLike {
+  readable: ReadableStream<Uint8Array> | null = null;
+  writable: WritableStream<Uint8Array> | null = null;
+  private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  /** Never acknowledge, to test falling back to the drive. */
+  silent = false;
+
+  constructor(readonly half: FakeHalf) {}
+
+  getInfo() {
+    return { usbVendorId: 0x239a, usbProductId: 0x00b3 };
+  }
+
+  async open() {
+    if (!this.half.ports().includes(this)) throw new DOMException("The device has been lost.", "NetworkError");
+    if (this.readable) throw new DOMException("The port is already open.", "InvalidStateError");
+    this.readable = new ReadableStream({ start: (c) => void (this.controller = c) });
+    let raw: number[] = [];
+    let image: number[] = [];
+    let size = 0;
+    let expectedCrc = -1;
+    this.writable = new WritableStream({
+      write: (chunk) => {
+        raw.push(...chunk);
+        for (;;) {
+          const start = raw.indexOf(0xc0);
+          const end = start < 0 ? -1 : raw.indexOf(0xc0, start + 1);
+          if (end < 0) return;
+          const body: number[] = [];
+          for (let i = start + 1; i < end; i++) {
+            if (raw[i] === 0xdb) body.push(raw[++i] === 0xdc ? 0xc0 : 0xdb);
+            else body.push(raw[i]);
+          }
+          raw = raw.slice(end + 1);
+          if (body.length < 6 || this.silent) continue;
+          const length = (body[1] >> 4) | (body[2] << 4);
+          const payload = body.slice(4, 4 + length);
+          const seq = body[0] & 7;
+          this.controller?.enqueue(new Uint8Array([0xc0, ((seq + 1) % 8) << 3, 0, 0, 0, 0xc0]));
+          const type = u32(payload, 0);
+          if (type === 3) {
+            size = u32(payload, 16);
+            image = [];
+          } else if (type === 1) {
+            expectedCrc = payload[16] | (payload[17] << 8);
+          } else if (type === 4) {
+            image.push(...payload.slice(4));
+          } else if (type === 5 && image.length === size && crc16(image) === expectedCrc) {
+            const data = new Uint8Array(image);
+            setTimeout(() => this.half.takeImage(data), 10);
+          }
+        }
+      },
+    });
+  }
+
+  async close() {
+    if (!this.readable) throw new DOMException("The port is already closed.", "InvalidStateError");
+    if (this.readable.locked || this.writable?.locked) throw new TypeError("Can't close a port while its streams are locked.");
+    try {
+      this.controller?.close();
+    } catch {
+      // Already cancelled by a reader.
+    }
+    this.readable = null;
+    this.writable = null;
+    this.controller = null;
+  }
+
+  async setSignals() {}
+}
+
 export class FakeHalf {
   /** Tandem build ID, or null for firmware without Tandem. */
   build: string | null;
@@ -79,6 +157,7 @@ export class FakeHalf {
   flashedWith: string | null = null;
   tandemPort: FakePort | null = null;
   studioPort: FakePort | null = null;
+  readonly bootPort = new FakeBootPort(this);
 
   constructor(
     readonly keyboard: FakeKeyboard,
@@ -94,8 +173,8 @@ export class FakeHalf {
     return { tandem: this.protocol, role: this.side === "left" ? "central" : "peripheral", name: "Adv360 Pro", build: this.build, repo: "octocat/adv360" };
   }
 
-  ports(): FakePort[] {
-    if (this.mode !== "app") return [];
+  ports(): PortLike[] {
+    if (this.mode !== "app") return [this.bootPort];
     return [this.tandemPort, this.studioPort].filter((p): p is FakePort => !!p);
   }
 
@@ -103,6 +182,7 @@ export class FakeHalf {
     this.mode = "update";
     this.keyboard.mount(this);
     this.keyboard.fire("disconnect");
+    setTimeout(() => this.keyboard.fire("connect"), 5);
   }
 
   /** The user's key combo, for a half without Tandem firmware. */
@@ -110,10 +190,16 @@ export class FakeHalf {
     this.enterUpdateMode();
   }
 
-  takeFirmware(data: Uint8Array) {
-    const text = new TextDecoder().decode(data);
+  /** A UF2 copied onto the drive. */
+  takeFirmware(uf2: Uint8Array) {
+    this.takeImage(uf2ToImage(uf2).data);
+  }
+
+  /** The plain firmware image, from the drive or over DFU. */
+  takeImage(image: Uint8Array) {
+    const text = new TextDecoder().decode(image).replace(/\0+$/, "");
     this.flashedWith = text;
-    const m = /^UF2\n(left|right)-\w+:(\w+)/.exec(text);
+    const m = /^(left|right)-\w+:(\w+)/.exec(text);
     if (m && !this.rejectsFirmware) {
       this.build = m[2];
       this.protocol = 2;
@@ -203,7 +289,7 @@ export const notADrive: DriveLike = {
 export class FakeKeyboard implements SerialLike {
   readonly left: FakeHalf;
   readonly right: FakeHalf;
-  readonly allowed = new Set<FakePort>();
+  readonly allowed = new Set<PortLike>();
   /** What a drive handle from an earlier update mode can still do. */
   remount: "works" | "fails" | "read-only" = "works";
   refusedWrites = 0;
@@ -220,6 +306,12 @@ export class FakeKeyboard implements SerialLike {
   /** As if the user allowed every port the halves have right now. */
   allowAll() {
     for (const half of [this.left, this.right]) for (const port of half.ports()) this.allowed.add(port);
+  }
+
+  /** As if the user allowed both halves' update ports on an earlier visit. */
+  allowUpdatePorts() {
+    this.allowed.add(this.left.bootPort);
+    this.allowed.add(this.right.bootPort);
   }
 
   mount(half: FakeHalf) {
@@ -241,9 +333,12 @@ export class FakeKeyboard implements SerialLike {
     return [...this.left.ports(), ...this.right.ports()].filter((p) => this.allowed.has(p));
   }
 
-  async requestPort() {
-    // The user picks the first port they haven't allowed yet.
-    const port = [...this.left.ports(), ...this.right.ports()].find((p) => !this.allowed.has(p));
+  async requestPort(options?: { filters?: { usbVendorId?: number; usbProductId?: number }[] }) {
+    // Chrome lists the ports that match a filter. The user picks the first one they haven't allowed yet.
+    const matches = (p: PortLike) =>
+      !options?.filters?.length ||
+      options.filters.some((f) => (f.usbVendorId === undefined || f.usbVendorId === p.getInfo().usbVendorId) && (f.usbProductId === undefined || f.usbProductId === p.getInfo().usbProductId));
+    const port = [...this.left.ports(), ...this.right.ports()].find((p) => matches(p) && !this.allowed.has(p));
     if (!port) throw new DOMException("No port selected by the user.", "NotFoundError");
     this.allowed.add(port);
     setTimeout(() => this.fire("connect"), 1);

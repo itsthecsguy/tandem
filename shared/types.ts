@@ -183,6 +183,9 @@ export type JobEvent =
    */
   | { type: "grant-port"; side: Side; before?: boolean }
   | { type: "grant-port-done"; side: Side }
+  /** The half is in update mode: the browser needs the user's OK to open its update port, once. */
+  | { type: "update-port"; side: Side }
+  | { type: "update-port-done"; side: Side }
   /** This browser can't reach the keyboard: download both files and copy them by hand. */
   | { type: "manual-flash"; left: string; right: string }
   | { type: "manual-flash-done" }
@@ -193,6 +196,7 @@ export type JobEvent =
 export type JobAction =
   | { type: "pick-drive"; side: Side }
   | { type: "grant-port"; side: Side; skip?: boolean }
+  | { type: "grant-update-port"; side: Side }
   | { type: "manual-flash-done" };
 
 export interface JobSnapshot {

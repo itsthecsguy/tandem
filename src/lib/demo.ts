@@ -1,5 +1,5 @@
 // Fake update runs for reviewing the update sheet without a keyboard.
-// Open the dev server with ?demo=setup, auto, drive, firsttime, port, byhand or done.
+// Open the dev server with ?demo=setup, auto, drive, firsttime, updateport, sending, port, byhand or done.
 
 import type { JobEvent, JobSnapshot, Session } from "../../shared/types";
 
@@ -42,8 +42,20 @@ const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
       ...base,
       { type: "step", step: "flash-right", state: "active", detail: "Waiting for update mode" },
       { type: "manual", side: "right", reason: "no-autoflash" },
-      { type: "drive", side: "right" },
+      { type: "update-port", side: "right" },
     ],
+  },
+  updateport: {
+    running: true,
+    events: [
+      ...base,
+      { type: "step", step: "flash-right", state: "active", detail: "Restarting into update mode" },
+      { type: "update-port", side: "right" },
+    ],
+  },
+  sending: {
+    running: true,
+    events: [...base, { type: "step", step: "flash-right", state: "active", detail: "Sending firmware 60%" }],
   },
   port: {
     running: true,

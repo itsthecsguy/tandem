@@ -7,9 +7,11 @@
 //
 // Flashing goes right half first, as the helper does. Each half restarts into
 // update mode by itself if it runs Tandem firmware, or with its key combo if
-// not. Then the user points the browser at the drive that appears, once: the
-// browser can keep that permission, and Tandem tries the same drive first
-// next time. After copying, the half must come back reporting the new build.
+// not. In update mode its bootloader opens a serial port, and Tandem sends the
+// firmware over it (see dfu.ts). Chrome asks once per half before a page may
+// open that port and remembers the answer, so later updates need no clicks.
+// The bootloader's drive is the fallback. After flashing, the half must come
+// back reporting the new build.
 
 import type { DevicesStatus, HalfStatus, JobAction, Side } from "../../shared/types";
 import type { Build } from "./builds";
@@ -18,8 +20,10 @@ import { type KeyboardAccess, emptyHalf, noKeyboard } from "./keyboard";
 import { KINESIS_LAYOUT } from "./kinesis";
 import { manualFlash } from "./manual";
 import { answer, isWaiting, waitFor } from "./prompts";
-import { KINESIS_VID, type PortLike, type SerialLike, type TandemInfo, askInfo, readTandemKeymap, restartToBootloader } from "./serial";
+import { DFU_TIMING, type DfuTiming, dfuFlash } from "./dfu";
+import { BOOTLOADER, KINESIS_VID, type PortLike, type SerialLike, type TandemInfo, askInfo, readTandemKeymap, restartToBootloader } from "./serial";
 import { loadDrive, loadDriveReuse, saveDrive, saveDriveReuse } from "./store";
+import { uf2ToImage } from "./uf2";
 import { sleep, withTimeout } from "./util";
 import { parseKeymap, toKeymap } from "../../shared/keymap";
 
@@ -41,9 +45,22 @@ export interface Deps {
   saveDrive?: (drive: DriveLike | null) => Promise<void>;
   /** Whether trying the saved drive again is worth it in this browser. */
   driveReuse?: { load(): boolean; save(on: boolean): void };
-  /** How long to try the last drive before asking, and to wait for a half to come back. */
-  timing?: { savedDriveMs: number; comebackMs: number; newPortMs: number; pollMs: number; infoMs: number; mountMs: number };
+  /** How long to wait for things: the saved drive, a restarting half, its update port. */
+  timing?: Partial<Timing>;
 }
+
+interface Timing {
+  savedDriveMs: number;
+  comebackMs: number;
+  newPortMs: number;
+  pollMs: number;
+  infoMs: number;
+  /** How long a restarted half's update port takes to show up. */
+  bootMs: number;
+  dfu: DfuTiming;
+}
+
+const TIMING: Timing = { savedDriveMs: 8000, comebackMs: 25_000, newPortMs: 6000, pollMs: 500, infoMs: 700, bootMs: 6000, dfu: DFU_TIMING };
 
 const UNLOCK_WAIT_MS = 120_000;
 
@@ -69,7 +86,7 @@ function browserDeps(): Deps | null {
 export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAccess {
   if (!deps) return noKeyboard();
   const { serial, pickDirectory } = deps;
-  const timing = deps.timing ?? { savedDriveMs: 8000, comebackMs: 25_000, newPortMs: 6000, pollMs: 500, infoMs: 700, mountMs: 2500 };
+  const timing: Timing = { ...TIMING, ...deps.timing };
 
   // What each allowed port said about itself, and when. A port that didn't
   // answer is asked again later: it may be ZMK Studio's, which never will, or
@@ -205,34 +222,6 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     picked: boolean;
   }
 
-  /** The half's update drive: the last one if the browser still allows it, or whichever the user picks. */
-  async function findDrive(side: Side, restarted: boolean, emit: Parameters<Flash>[1], signal: AbortSignal): Promise<Found> {
-    if (restarted && drive && reuseDrive) {
-      const saved = await pollSaved(signal, timing.savedDriveMs);
-      if (saved) return { drive: saved, picked: false };
-    } else if (restarted) {
-      // Give macOS a moment to mount the drive before offering to choose it.
-      await sleep(timing.mountMs, signal);
-    }
-    emit({ type: "drive", side });
-    const done = new AbortController();
-    const stop = () => done.abort(signal.reason);
-    signal.addEventListener("abort", stop, { once: true });
-    const never = new Promise<never>(() => {});
-    try {
-      const picked = waitFor<DriveLike>({ type: "pick-drive", side }, done.signal).then((d) => ({ drive: d, picked: true }));
-      const saved = (reuseDrive ? pollSaved(done.signal) : never).then((d) => (d ? { drive: d, picked: false } : never));
-      // Whichever loses is abandoned below. Keep its rejection quiet.
-      picked.catch(() => {});
-      saved.catch(() => {});
-      return await Promise.race([picked, saved]);
-    } finally {
-      signal.removeEventListener("abort", stop);
-      done.abort();
-      emit({ type: "drive-done", side });
-    }
-  }
-
   /** Copies the firmware, asking for the drive again if Chrome won't write through the saved one. */
   async function copyTo(found: Found, side: Side, data: Uint8Array, emit: Parameters<Flash>[1], signal: AbortSignal) {
     try {
@@ -274,13 +263,92 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     return seen;
   }
 
+  /** Ports of halves in update mode that the browser may open. */
+  async function bootPorts(): Promise<PortLike[]> {
+    const ports = await serial.getPorts().catch(() => []);
+    return ports.filter((p) => {
+      const info = p.getInfo();
+      return info.usbVendorId === BOOTLOADER.usbVendorId && info.usbProductId === BOOTLOADER.usbProductId;
+    });
+  }
+
+  /** Waits up to `ms` for an update port the browser may open. */
+  async function waitForBootPort(ms: number, signal: AbortSignal): Promise<PortLike | null> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      const [port] = await bootPorts();
+      if (port) return port;
+      if (Date.now() >= deadline) return null;
+      await sleep(timing.pollMs, signal);
+    }
+  }
+
+  /** A half is visible: its Tandem port, or for the left half, ZMK Studio's. */
+  function visible(side: Side): boolean {
+    return !!tandemPort(side) || (side === "left" && otherPorts().length > 0);
+  }
+
+  type Method = { kind: "serial"; port: PortLike } | { kind: "drive"; found: Found };
+
+  /**
+   * How to get the firmware onto a half in update mode. Its update port, if
+   * the browser may open it, needs no clicks. Otherwise the user allows that
+   * port once, which Chrome remembers, or chooses the drive instead.
+   */
+  async function updateMethod(side: Side, restarted: boolean, emit: Parameters<Flash>[1], signal: AbortSignal): Promise<Method> {
+    const port = await waitForBootPort(restarted ? timing.bootMs : 0, signal);
+    if (port) return { kind: "serial", port };
+
+    emit({ type: "update-port", side });
+    const done = new AbortController();
+    const stop = () => done.abort(signal.reason);
+    signal.addEventListener("abort", stop, { once: true });
+    const never = new Promise<never>(() => {});
+    try {
+      const allowed = waitFor<boolean>({ type: "grant-update-port", side }, done.signal).then(async () => {
+        const p = await waitForBootPort(3000, done.signal);
+        return p ? ({ kind: "serial", port: p } as Method) : never;
+      });
+      const picked = waitFor<DriveLike>({ type: "pick-drive", side }, done.signal).then((d) => ({ kind: "drive", found: { drive: d, picked: true } }) as Method);
+      // Allowed before, say on an earlier try: it shows up once the half is in update mode.
+      const appears = waitForBootPort(Infinity, done.signal).then((p) => (p ? ({ kind: "serial", port: p } as Method) : never));
+      // In browsers that keep drive handles across remounts, the last drive works too.
+      const saved = (drive && reuseDrive ? pollSaved(done.signal) : never).then((d) =>
+        d ? ({ kind: "drive", found: { drive: d, picked: false } } as Method) : never,
+      );
+      for (const p of [allowed, picked, appears, saved]) p.catch(() => {});
+      return await Promise.race([allowed, picked, appears, saved]);
+    } finally {
+      signal.removeEventListener("abort", stop);
+      done.abort();
+      emit({ type: "update-port-done", side });
+    }
+  }
+
+  /** Sends the firmware over the half's update port, reporting progress. */
+  async function sendOverSerial(port: PortLike, side: Side, uf2: Uint8Array, emit: Parameters<Flash>[1]) {
+    const step = `flash-${side}` as const;
+    let shown = -1;
+    await dfuFlash(
+      port,
+      uf2ToImage(uf2).data,
+      (fraction) => {
+        const tenth = Math.floor(fraction * 10);
+        if (tenth === shown) return;
+        shown = tenth;
+        emit({ type: "step", step, state: "active", detail: `Sending firmware ${tenth * 10}%` });
+      },
+      timing.dfu,
+    );
+  }
+
   async function flashHalf(
     side: Side,
     build: Build,
     emit: Parameters<Flash>[1],
     signal: AbortSignal,
-    /** The half's drive, when it's already in update mode. */
-    ready: DriveLike | null,
+    /** How to reach the half, when it's already in update mode. */
+    ready: Method | null,
     /** Halves that ran Tandem firmware when the update started. */
     tandemAtStart: Side[],
   ): Promise<boolean> {
@@ -298,6 +366,9 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       emit({ type: "grant-port-done", side });
       if (granted) found = tandemPort(side) ?? ((await refresh(true)) && tandemPort(side));
     }
+
+    const byHand = !ready && !found;
+    const otherWasUp = visible(other);
     if (ready) {
       emit({ type: "step", step, state: "active", detail: "Already in update mode" });
     } else if (found) {
@@ -313,10 +384,34 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       emit({ type: "manual", side, reason: "no-autoflash" });
     }
 
-    const target = ready ? { drive: ready, picked: false } : await findDrive(side, !!found, emit, signal);
-    if (!found && !ready) emit({ type: "manual-done", side });
-    emit({ type: "step", step, state: "active", detail: "Copying firmware" });
-    await copyTo(target, side, build[side], emit, signal);
+    const method = ready ?? (await updateMethod(side, !!found, emit, signal));
+    if (byHand) {
+      // Both halves' update modes look the same. Make sure the user's key
+      // combo went to this half, not the other one.
+      await refresh(true);
+      if (otherWasUp && !visible(other)) {
+        throw new Error(`The ${other} half went into update mode instead of the ${side} half. Press the ${other} half's reset button once, then update again.`);
+      }
+      emit({ type: "manual-done", side });
+    }
+
+    if (method.kind === "serial") {
+      emit({ type: "step", step, state: "active", detail: "Sending firmware" });
+      try {
+        await sendOverSerial(method.port, side, build[side], emit);
+      } catch (err) {
+        // The half is still in update mode, so its drive works as a fallback.
+        emit({ type: "step", step, state: "active", detail: `Sending over the update port failed (${(err as Error).message}). Copy it to the drive instead.` });
+        emit({ type: "drive", side });
+        const picked = await waitFor<DriveLike>({ type: "pick-drive", side }, signal);
+        emit({ type: "drive-done", side });
+        emit({ type: "step", step, state: "active", detail: "Copying firmware" });
+        await copyTo({ drive: picked, picked: true }, side, build[side], emit, signal);
+      }
+    } else {
+      emit({ type: "step", step, state: "active", detail: "Copying firmware" });
+      await copyTo(method.found, side, build[side], emit, signal);
+    }
     emit({ type: "step", step, state: "active", detail: "Restarting" });
 
     // A half that had no Tandem port comes back with one the browser hasn't
@@ -343,22 +438,25 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       state: "done",
       detail: tandem.length === 2 ? "Both halves run Tandem firmware" : tandem.length ? `The ${tandem[0]} half runs Tandem firmware` : "Neither half runs Tandem firmware yet",
     });
-    // A half left in update mode, say by a reload mid-update, has its drive
-    // showing already. Both halves' drives look the same, so it only counts
-    // when the other half is plainly running Tandem firmware.
-    let waiting: { side: Side; drive: DriveLike } | null = null;
-    if (drive && reuseDrive && (await isUpdateDrive(drive))) {
+
+    // A half left in update mode, say by a reload mid-update, shows its update
+    // port, or its drive. Both halves look the same in update mode, so it only
+    // counts when the other half is plainly running.
+    let waiting: { side: Side; method: Method } | null = null;
+    const [bootPort] = await bootPorts();
+    const savedDrive = !bootPort && drive && reuseDrive && (await isUpdateDrive(drive)) ? drive : null;
+    if (bootPort || savedDrive) {
       const silent = SIDES.filter((s) => !d[s].autoflash);
       if (silent.length !== 1) {
         throw new Error("One half is already in update mode, and Tandem can't tell which. Press that half's reset button once so it restarts, then update again.");
       }
-      waiting = { side: silent[0], drive };
+      waiting = { side: silent[0], method: bootPort ? { kind: "serial", port: bootPort } : { kind: "drive", found: { drive: savedDrive!, picked: false } } };
     }
 
     let checked = true;
     const order = waiting ? [waiting.side, ...SIDES.filter((s) => s !== waiting!.side)] : SIDES;
     for (const side of order) {
-      checked = (await flashHalf(side, build, emit, signal, side === waiting?.side ? waiting.drive : null, tandem)) && checked;
+      checked = (await flashHalf(side, build, emit, signal, side === waiting?.side ? waiting.method : null, tandem)) && checked;
     }
     emit({ type: "step", step: "verify", state: checked ? "done" : "skipped", detail: checked ? `Both halves run ${build.id}` : "The browser couldn't ask every half" });
     return checked;
@@ -427,6 +525,15 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
           await keepDrive?.(picked).catch(() => {});
         }
         answer(action, picked);
+      } else if (action.type === "grant-update-port") {
+        if (!isWaiting(action)) return;
+        try {
+          await serial.requestPort({ filters: [BOOTLOADER] });
+          answer(action, true);
+        } catch (e) {
+          // Nothing picked, say because the half isn't in update mode yet. Keep waiting.
+          if (!isMissing(e)) throw e;
+        }
       } else if (action.type === "grant-port") {
         if (!isWaiting(action)) return;
         if (action.skip) {

@@ -174,12 +174,18 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
         <li>
           <strong>You put each half in update mode.</strong> Tandem shows you which two keys to press, right half first.
         </li>
-        <li>
-          <strong>Tandem copies the firmware</strong>
-          {api.caps.engine === "browser" ? " once you point it at each half's drive, " : " "}
-          and checks that each half comes back running it.
-        </li>
+        {api.caps.engine === "browser" ? (
+          <li>
+            <strong>You allow each half's update port.</strong> Chrome lists one entry, ADV360PRO. Tandem sends the firmware over it and checks
+            that each half comes back running it.
+          </li>
+        ) : (
+          <li>
+            <strong>Tandem copies the firmware</strong> and checks that each half comes back running it.
+          </li>
+        )}
       </ol>
+      {api.caps.engine === "browser" && <p className="hint">After this, updates need no key presses and no clicks beyond Update.</p>}
       {!both && api.caps.engine === "helper" && (
         <p className="callout">
           <Plug size={15} /> Connect both halves with USB cables. Tandem will wait for them.

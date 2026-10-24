@@ -7,6 +7,9 @@ import { withTimeout } from "./util";
 
 export const KINESIS_VID = 0x29ea;
 
+/** A half in update mode: Kinesis's bootloader, built from Adafruit's, under Adafruit's USB IDs. */
+export const BOOTLOADER = { usbVendorId: 0x239a, usbProductId: 0x00b3 };
+
 // A half that's still starting, or a port the OS is still setting up, can
 // leave Web Serial's calls hanging. Nothing here may wait forever.
 const OPEN_MS = 3000;
