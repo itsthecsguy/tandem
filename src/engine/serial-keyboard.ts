@@ -20,7 +20,7 @@ import { manualFlash } from "./manual";
 import { answer, isWaiting, waitFor } from "./prompts";
 import { KINESIS_VID, type PortLike, type SerialLike, type TandemInfo, askInfo, readTandemKeymap, restartToBootloader } from "./serial";
 import { loadDrive, saveDrive } from "./store";
-import { sleep } from "./util";
+import { sleep, withTimeout } from "./util";
 import { parseKeymap, toKeymap } from "../../shared/keymap";
 
 /** The parts of a FileSystemDirectoryHandle that Tandem uses. */
@@ -68,9 +68,10 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
   const { serial, pickDirectory } = deps;
   const timing = deps.timing ?? { savedDriveMs: 8000, comebackMs: 25_000, newPortMs: 6000, pollMs: 500, infoMs: 700 };
 
-  // What each allowed port said about itself. Ports that didn't answer are
-  // other firmware's, such as ZMK Studio's.
-  const known = new Map<PortLike, TandemInfo | null>();
+  // What each allowed port said about itself, and when. A port that didn't
+  // answer is asked again later: it may be ZMK Studio's, which never will, or
+  // a half that was still starting up.
+  const known = new Map<PortLike, { info: TandemInfo | null; at: number }>();
   const busy = new Set<PortLike>();
   const watchers = new Set<(d: DevicesStatus) => void>();
   let devices = compute();
@@ -79,12 +80,12 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
   void deps.loadDrive?.().then((d) => (drive ??= d)).catch(() => {});
 
   function tandemPort(side: Side): [PortLike, TandemInfo] | null {
-    for (const [port, info] of known) if (info && sideOf(info) === side) return [port, info];
+    for (const [port, { info }] of known) if (info && sideOf(info) === side) return [port, info];
     return null;
   }
 
   function otherPorts(): PortLike[] {
-    return [...known].filter(([, info]) => !info).map(([port]) => port);
+    return [...known].filter(([, { info }]) => !info).map(([port]) => port);
   }
 
   function compute(): DevicesStatus {
@@ -103,6 +104,16 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     return { left, right, unknownBootloaders: [], needsAccess: !left.autoflash || !right.autoflash, scannedAt: new Date().toISOString() };
   }
 
+  /** Keeps probes off ports a Studio session holds, which can be minutes while it waits for the unlock key. */
+  async function withStudioPorts<T>(ports: PortLike[], fn: () => Promise<T>): Promise<T> {
+    for (const p of ports) busy.add(p);
+    try {
+      return await fn();
+    } finally {
+      for (const p of ports) busy.delete(p);
+    }
+  }
+
   /** A port that just connected may need a moment before it answers. */
   async function probe(port: PortLike): Promise<TandemInfo | null> {
     for (let i = 0; i < 3; i++) {
@@ -114,14 +125,20 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
   }
 
   let inflight: Promise<DevicesStatus> | null = null;
+  const REASK_MS = 5000;
 
-  function refresh(): Promise<DevicesStatus> {
+  /** Asks new ports what they are, and silent ones again. `force` asks silent ones now. */
+  function refresh(force = false): Promise<DevicesStatus> {
+    if (force && inflight) return inflight.then(() => refresh(true));
     inflight ??= (async () => {
       const ports = (await serial.getPorts()).filter((p) => p.getInfo().usbVendorId === KINESIS_VID);
       for (const port of [...known.keys()]) if (!ports.includes(port)) known.delete(port);
       for (const port of ports) {
-        if (known.has(port) || busy.has(port)) continue;
-        known.set(port, await probe(port));
+        const seen = known.get(port);
+        if (busy.has(port) || seen?.info) continue;
+        if (seen && !force && Date.now() - seen.at < REASK_MS) continue;
+        const info = seen ? await askInfo(port, timing.infoMs) : await probe(port);
+        known.set(port, { info, at: Date.now() });
       }
       devices = compute();
       const now = JSON.stringify({ ...devices, scannedAt: "" });
@@ -198,7 +215,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     const deadline = Date.now() + ms;
     let seen: TandemInfo | null = null;
     while (Date.now() < deadline) {
-      await refresh();
+      await withTimeout(refresh(), 5000, "Looking for the half").catch(() => {});
       seen = tandemPort(side)?.[1] ?? seen;
       if (seen?.build === build) return seen;
       await sleep(timing.pollMs, signal);
@@ -212,10 +229,24 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     emit: Parameters<Flash>[1],
     signal: AbortSignal,
     /** The half's drive, when it's already in update mode. */
-    ready: DriveLike | null = null,
+    ready: DriveLike | null,
+    /** Halves that ran Tandem firmware when the update started. */
+    tandemAtStart: Side[],
   ): Promise<boolean> {
     const step = `flash-${side}` as const;
-    const found = ready ? null : tandemPort(side);
+    let found = ready ? null : tandemPort(side);
+    // The browser can't see a port nobody allowed. When the other half
+    // already ran Tandem firmware, this one probably does too, so ask for its
+    // port before falling back to a key combo. Not during first-time setup,
+    // when neither half had it.
+    const other = side === "left" ? "right" : "left";
+    if (!ready && !found && tandemAtStart.includes(other)) {
+      emit({ type: "step", step, state: "active", detail: "Waiting for its port" });
+      emit({ type: "grant-port", side, before: true });
+      const granted = await waitFor<boolean>({ type: "grant-port", side }, signal);
+      emit({ type: "grant-port-done", side });
+      if (granted) found = tandemPort(side) ?? ((await refresh(true)) && tandemPort(side));
+    }
     if (ready) {
       emit({ type: "step", step, state: "active", detail: "Already in update mode" });
     } else if (found) {
@@ -253,7 +284,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
 
   const flash: Flash = async (build, emit, signal) => {
     emit({ type: "step", step: "prepare", state: "active", detail: "Looking for both halves" });
-    const d = await refresh();
+    const d = await refresh(true);
     const tandem = SIDES.filter((s) => d[s].autoflash);
     emit({
       type: "step",
@@ -275,7 +306,9 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
 
     let checked = true;
     const order = waiting ? [waiting.side, ...SIDES.filter((s) => s !== waiting!.side)] : SIDES;
-    for (const side of order) checked = (await flashHalf(side, build, emit, signal, side === waiting?.side ? waiting.drive : null)) && checked;
+    for (const side of order) {
+      checked = (await flashHalf(side, build, emit, signal, side === waiting?.side ? waiting.drive : null, tandem)) && checked;
+    }
     emit({ type: "step", step: "verify", state: checked ? "done" : "skipped", detail: checked ? `Both halves run ${build.id}` : "The browser couldn't ask every half" });
     return checked;
   };
@@ -293,7 +326,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       const d = await refresh();
       const tandemKeymap = d.left.autoflash && d.left.protocol >= 2;
       const others = otherPorts();
-      const status = !tandemKeymap && others.length ? await studio().then((s) => s.studioStatus(others)).catch(() => null) : null;
+      const status = !tandemKeymap && others.length ? await withStudioPorts(others, () => studio().then((s) => s.studioStatus(others))).catch(() => null) : null;
       return { left: d.left, right: d.right, tandemKeymap, tandemRepo: d.left.repo, studio: status, layout: KINESIS_LAYOUT.keys };
     },
     async readLayout() {
@@ -306,7 +339,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       }
       const others = otherPorts();
       if (!others.length) throw new Error("Connect the left half and allow its port first.");
-      const imported = await (await studio()).readStudioLayout(others, UNLOCK_WAIT_MS);
+      const imported = await withStudioPorts(others, async () => (await studio()).readStudioLayout(others, UNLOCK_WAIT_MS));
       return { layout: { source: "studio", ...imported, layout: KINESIS_LAYOUT.keys } };
     },
     async connect() {
@@ -316,7 +349,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
         if (isMissing(e)) return;
         throw e;
       }
-      await refresh();
+      await refresh(true);
     },
     flash: pickDirectory ? flash : manualFlash,
     async act(action: JobAction) {
@@ -338,6 +371,10 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
         answer(action, picked);
       } else if (action.type === "grant-port") {
         if (!isWaiting(action)) return;
+        if (action.skip) {
+          answer(action, false);
+          return;
+        }
         try {
           await serial.requestPort({ filters: [{ usbVendorId: KINESIS_VID }] });
           answer(action, true);

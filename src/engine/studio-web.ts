@@ -7,7 +7,7 @@
 import { type RpcConnection, call_rpc, create_rpc_connection } from "@zmkfirmware/zmk-studio-ts-client";
 
 import { type ImportedLayout, convertStudioKeymap } from "../../shared/studio";
-import { type PortLike, exclusive } from "./serial";
+import { type PortLike, closePort, exclusive, openPort } from "./serial";
 import { sleep, withTimeout } from "./util";
 
 const LOCKED = 0;
@@ -20,7 +20,7 @@ interface Session {
 }
 
 async function connect(port: PortLike): Promise<Session | null> {
-  await port.open({ baudRate: 115200 });
+  await openPort(port, 115200);
   await port.setSignals?.({ dataTerminalReady: true, requestToSend: true }).catch(() => {});
   const abortController = new AbortController();
   const conn = create_rpc_connection(
@@ -31,7 +31,7 @@ async function connect(port: PortLike): Promise<Session | null> {
   const close = async () => {
     abortController.abort();
     await sleep(50);
-    await port.close().catch(() => {});
+    await closePort(port);
   };
   try {
     const res = await withTimeout(call_rpc(conn, { core: { getDeviceInfo: true } }), 1500, "Studio");

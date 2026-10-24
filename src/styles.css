@@ -2774,6 +2774,12 @@ select.input {
   max-width: 52ch;
 }
 
+.drive-pick--row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .manual-files {
   display: flex;
   flex-wrap: wrap;

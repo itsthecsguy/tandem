@@ -177,8 +177,11 @@ export type JobEvent =
   /** The browser needs the user to choose this half's update drive. */
   | { type: "drive"; side: Side }
   | { type: "drive-done"; side: Side }
-  /** The half came back with a port the browser hasn't been allowed to open yet. */
-  | { type: "grant-port"; side: Side }
+  /**
+   * The browser needs the user's OK to open this half's port: after its first
+   * Tandem firmware, or before an update when it can't see the half at all.
+   */
+  | { type: "grant-port"; side: Side; before?: boolean }
   | { type: "grant-port-done"; side: Side }
   /** This browser can't reach the keyboard: download both files and copy them by hand. */
   | { type: "manual-flash"; left: string; right: string }
@@ -189,7 +192,7 @@ export type JobEvent =
 /** The user's answer to something an update asked for. */
 export type JobAction =
   | { type: "pick-drive"; side: Side }
-  | { type: "grant-port"; side: Side }
+  | { type: "grant-port"; side: Side; skip?: boolean }
   | { type: "manual-flash-done" };
 
 export interface JobSnapshot {

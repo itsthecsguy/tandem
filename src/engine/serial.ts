@@ -3,7 +3,15 @@
 // file it was built from, and restarts into its bootloader when it's opened at
 // 1200 baud. See tandem/zmk-tandem/src/autoflash.c.
 
+import { withTimeout } from "./util";
+
 export const KINESIS_VID = 0x29ea;
+
+// A half that's still starting, or a port the OS is still setting up, can
+// leave Web Serial's calls hanging. Nothing here may wait forever.
+const OPEN_MS = 3000;
+const WRITE_MS = 1500;
+const CLOSE_MS = 1500;
 
 /** The parts of Web Serial's SerialPort that Tandem uses. */
 export interface PortLike {
@@ -42,15 +50,30 @@ export function exclusive<T>(port: PortLike, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+export async function closePort(port: PortLike): Promise<void> {
+  await withTimeout(port.close(), CLOSE_MS, "Closing the port").catch(() => {});
+}
+
+/** Opens a port, closing it first if an earlier call left it open. */
+export async function openPort(port: PortLike, baudRate: number): Promise<void> {
+  try {
+    await withTimeout(port.open({ baudRate }), OPEN_MS, "Opening the port");
+  } catch (err) {
+    if (!(err instanceof Error && err.name === "InvalidStateError")) throw err;
+    await closePort(port);
+    await withTimeout(port.open({ baudRate }), OPEN_MS, "Opening the port");
+  }
+}
+
 async function withPort<T>(port: PortLike, baudRate: number, fn: (port: PortLike) => Promise<T>): Promise<T> {
   return exclusive(port, async () => {
-    await port.open({ baudRate });
+    await openPort(port, baudRate);
     try {
       // ZMK's USB serial only sends once the host says it's listening.
-      await port.setSignals?.({ dataTerminalReady: true, requestToSend: true }).catch(() => {});
+      await withTimeout(port.setSignals?.({ dataTerminalReady: true, requestToSend: true }) ?? Promise.resolve(), WRITE_MS, "Setting signals").catch(() => {});
       return await fn(port);
     } finally {
-      await port.close().catch(() => {});
+      await closePort(port);
     }
   });
 }
@@ -58,7 +81,7 @@ async function withPort<T>(port: PortLike, baudRate: number, fn: (port: PortLike
 async function send(port: PortLike, text: string) {
   const writer = port.writable!.getWriter();
   try {
-    await writer.write(new TextEncoder().encode(text));
+    await withTimeout(writer.write(new TextEncoder().encode(text)), WRITE_MS, "Writing to the port");
   } finally {
     writer.releaseLock();
   }
@@ -139,10 +162,10 @@ export async function readTandemKeymap(port: PortLike, ms = 6000): Promise<strin
 export async function restartToBootloader(port: PortLike): Promise<boolean> {
   try {
     await exclusive(port, async () => {
-      await port.open({ baudRate: 1200 });
+      await openPort(port, 1200);
       await new Promise((r) => setTimeout(r, 100));
       // The half may already be gone, so closing can fail.
-      await port.close().catch(() => {});
+      await closePort(port);
     });
     return true;
   } catch {

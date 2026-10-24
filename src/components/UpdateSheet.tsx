@@ -53,21 +53,28 @@ function DrivePrompt({ side, onAct }: { side: Side; onAct: (a: JobAction) => voi
   );
 }
 
-function GrantPortPrompt({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
+function GrantPortPrompt({ side, before, onAct }: { side: Side; before: boolean; onAct: (a: JobAction) => void }) {
   return (
     <div className="guide">
       <div className="guide__head">
         <span className="guide__badge">One-time step</span>
-        <h3>Allow the {sideName(side)} half's new port</h3>
+        <h3>Allow the {sideName(side)} half's port</h3>
         <p>
-          The {sideName(side)} half now runs Tandem firmware, which adds a port this browser hasn't been allowed to open yet. Allow it so Tandem
-          can check the update. Later updates won't ask again.
+          {before
+            ? `This browser can't see the ${sideName(side)} half yet. If it runs Tandem firmware, allow its port and Tandem restarts it by itself, with no key combo.`
+            : `The ${sideName(side)} half now runs Tandem firmware, which adds a port this browser hasn't been allowed to open yet. Allow it so Tandem can check the update.`}{" "}
+          In Chrome's list it's called Adv360 Pro rt for the right half, or Adv360 Pro for the left. Later updates won't ask again.
         </p>
       </div>
-      <div className="drive-pick">
+      <div className="drive-pick drive-pick--row">
         <button type="button" className="btn btn--primary" onClick={() => onAct({ type: "grant-port", side })}>
           <Usb size={15} /> Allow port
         </button>
+        {before && (
+          <button type="button" className="btn btn--ghost" onClick={() => onAct({ type: "grant-port", side, skip: true })}>
+            Use the key combo instead
+          </button>
+        )}
       </div>
     </div>
   );
@@ -257,7 +264,7 @@ export function UpdateProgress({ view, keymap, layout, onAct }: { view: JobView;
         />
       )}
       {view.drive && !driveWithCombo && <DrivePrompt side={view.drive} onAct={onAct} />}
-      {view.grantPort && <GrantPortPrompt side={view.grantPort} onAct={onAct} />}
+      {view.grantPort && <GrantPortPrompt side={view.grantPort.side} before={view.grantPort.before} onAct={onAct} />}
       {view.manualFlash && <ManualFlashGuide files={view.manualFlash} keymap={keymap} layout={layout} onAct={onAct} />}
 
       {view.done && (

@@ -30,8 +30,9 @@ export class FakePort implements PortLike {
     let pending = "";
     this.writable = new WritableStream({
       write: (chunk) => {
-        // ZMK Studio's port ignores Tandem's text commands.
-        if (this.kind !== "tandem") return;
+        // ZMK Studio's port ignores Tandem's text commands, and so does a
+        // half that's still starting up.
+        if (this.kind !== "tandem" || Date.now() < this.half.silentUntil) return;
         pending += new TextDecoder().decode(chunk);
         for (let i = pending.indexOf("\n"); i >= 0; i = pending.indexOf("\n")) {
           const command = pending.slice(0, i).trim();
@@ -73,6 +74,8 @@ export class FakeHalf {
   restartsOnRequest = true;
   /** Ignore new firmware, to test a flash that doesn't take. */
   rejectsFirmware = false;
+  /** Until then, the Tandem port ignores commands, like a half still starting up. */
+  silentUntil = 0;
   flashedWith: string | null = null;
   tandemPort: FakePort | null = null;
   studioPort: FakePort | null = null;
