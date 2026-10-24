@@ -181,7 +181,7 @@ export type JobEvent =
    * The browser needs the user's OK to open this half's port: after its first
    * Tandem firmware, or before an update when it can't see the half at all.
    */
-  | { type: "grant-port"; side: Side; before?: boolean }
+  | { type: "grant-port"; side: Side; before?: boolean; retry?: boolean }
   | { type: "grant-port-done"; side: Side }
   /** The half is in update mode: the browser needs the user's OK to open its update port, once. */
   | { type: "update-port"; side: Side }

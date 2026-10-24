@@ -296,6 +296,8 @@ export class FakeKeyboard implements SerialLike {
   mounted: FakeHalf | null = null;
   mountCount = 0;
   pickerOpened = 0;
+  /** The next this many port picks land on a port that's already allowed, like a wrong pick in Chrome's list. */
+  wrongPicks = 0;
   private listeners: Record<string, (() => void)[]> = { connect: [], disconnect: [] };
 
   constructor(options: { left: { build: string | null; studio?: boolean }; right: { build: string | null } }) {
@@ -338,7 +340,15 @@ export class FakeKeyboard implements SerialLike {
     const matches = (p: PortLike) =>
       !options?.filters?.length ||
       options.filters.some((f) => (f.usbVendorId === undefined || f.usbVendorId === p.getInfo().usbVendorId) && (f.usbProductId === undefined || f.usbProductId === p.getInfo().usbProductId));
-    const port = [...this.left.ports(), ...this.right.ports()].find((p) => matches(p) && !this.allowed.has(p));
+    const present = [...this.left.ports(), ...this.right.ports()].filter(matches);
+    if (this.wrongPicks > 0) {
+      const paired = present.find((p) => this.allowed.has(p));
+      if (paired) {
+        this.wrongPicks--;
+        return paired;
+      }
+    }
+    const port = present.find((p) => !this.allowed.has(p));
     if (!port) throw new DOMException("No port selected by the user.", "NotFoundError");
     this.allowed.add(port);
     setTimeout(() => this.fire("connect"), 1);

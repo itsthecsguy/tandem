@@ -173,6 +173,18 @@ describe("Web Serial keyboard", () => {
     expect(access.devices().left.autoflash && access.devices().right.autoflash).toBe(true);
   });
 
+  it("asks again when the user picks the wrong port in Chrome's list", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.allowAll();
+    kb.allowUpdatePorts();
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().left.mode === "app");
+    kb.wrongPicks = 1;
+    expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
+    expect(events).toContainEqual({ type: "grant-port", side: "right", retry: true });
+    expect(access.devices().left.autoflash && access.devices().right.autoflash).toBe(true);
+  });
+
   it("stops when the key combo puts the other half in update mode", async () => {
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
     kb.allowAll();

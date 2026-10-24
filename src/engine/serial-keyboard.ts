@@ -417,11 +417,14 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     // A half that had no Tandem port comes back with one the browser hasn't
     // been allowed to open, so don't wait long before asking.
     let back = await comeback(side, build.id, found ? timing.comebackMs : timing.newPortMs, signal);
-    if (!back && !found) {
-      emit({ type: "grant-port", side });
+    // The left half lists two ports with the same name, so a first pick can be
+    // ZMK Studio's. Ask again, saying so, a couple of times.
+    for (let attempt = 0; !back && !found && attempt < 3; attempt++) {
+      emit({ type: "grant-port", side, retry: attempt > 0 });
       const granted = await waitFor<boolean>({ type: "grant-port", side }, signal);
       emit({ type: "grant-port-done", side });
-      if (granted) back = await comeback(side, build.id, timing.comebackMs, signal);
+      if (!granted) break;
+      back = await comeback(side, build.id, timing.newPortMs, signal);
     }
     if (back && back.build !== build.id) throw new Error(`The ${side} half is running build ${back.build}, expected ${build.id}.`);
     emit({ type: "step", step, state: "done", detail: back ? `Running ${build.id}` : "Copied, but the browser couldn't ask it" });
@@ -545,7 +548,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
           answer(action, true);
         } catch (e) {
           if (!isMissing(e)) throw e;
-          answer(action, false);
+          // Closing Chrome's list without picking leaves the prompt up.
         }
       } else {
         answer(action);

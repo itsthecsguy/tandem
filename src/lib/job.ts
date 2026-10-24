@@ -21,7 +21,7 @@ export interface JobView {
   /** The browser needs the user's OK, once, to open this half's update port. */
   updatePort: Side | null;
   /** The browser needs the user to allow this half's port, before or after flashing it. */
-  grantPort: { side: Side; before: boolean } | null;
+  grantPort: { side: Side; before: boolean; retry: boolean } | null;
   /** This browser can't reach the keyboard: the files to copy by hand. */
   manualFlash: { left: string; right: string } | null;
   logs: string[];
@@ -91,7 +91,7 @@ export function viewJob(job: JobSnapshot): JobView {
         if (view.manual?.side === e.side) view.manual = null;
         break;
       case "grant-port":
-        view.grantPort = { side: e.side, before: !!e.before };
+        view.grantPort = { side: e.side, before: !!e.before, retry: !!e.retry };
         break;
       case "grant-port-done":
         if (view.grantPort?.side === e.side) view.grantPort = null;

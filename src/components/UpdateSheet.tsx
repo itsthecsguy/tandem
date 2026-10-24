@@ -86,28 +86,41 @@ function DrivePrompt({ side, onAct }: { side: Side; onAct: (a: JobAction) => voi
   );
 }
 
-function GrantPortPrompt({ side, before, onAct }: { side: Side; before: boolean; onAct: (a: JobAction) => void }) {
+/** The entry to pick in Chrome's port list for each half's Tandem port. */
+function portEntry(side: Side) {
+  return side === "right" ? (
+    <>
+      pick <strong>Adv360 Pro rt</strong>
+    </>
+  ) : (
+    <>
+      pick the <strong>Adv360 Pro</strong> entry that isn't marked Paired
+    </>
+  );
+}
+
+function GrantPortPrompt({ side, before, retry, onAct }: { side: Side; before: boolean; retry: boolean; onAct: (a: JobAction) => void }) {
   return (
     <div className="guide">
       <div className="guide__head">
         <span className="guide__badge">One-time step</span>
-        <h3>Allow the {sideName(side)} half's port</h3>
+        <h3>{retry ? `That wasn't the ${sideName(side)} half's Tandem port` : `Allow the ${sideName(side)} half's port`}</h3>
         <p>
-          {before
-            ? `This browser can't see the ${sideName(side)} half yet. If it runs Tandem firmware, allow its port and Tandem restarts it by itself, with no key combo.`
-            : `The ${sideName(side)} half now runs Tandem firmware, which adds a port this browser hasn't been allowed to open yet. Allow it so Tandem can check the update.`}{" "}
-          In Chrome's list it's called Adv360 Pro rt for the right half, or Adv360 Pro for the left. Later updates won't ask again.
+          {retry
+            ? "Try the other entry."
+            : before
+              ? `This browser can't see the ${sideName(side)} half yet. If it runs Tandem firmware, allow its port and Tandem restarts it by itself, with no key combo.`
+              : `The ${sideName(side)} half now runs Tandem firmware, which adds a port this browser hasn't been allowed to open yet.`}{" "}
+          In Chrome's list, {portEntry(side)}. Chrome remembers it, so later updates won't ask.
         </p>
       </div>
       <div className="drive-pick drive-pick--row">
         <button type="button" className="btn btn--primary" onClick={() => onAct({ type: "grant-port", side })}>
           <Usb size={15} /> Allow port
         </button>
-        {before && (
-          <button type="button" className="btn btn--ghost" onClick={() => onAct({ type: "grant-port", side, skip: true })}>
-            Use the key combo instead
-          </button>
-        )}
+        <button type="button" className="btn btn--ghost" onClick={() => onAct({ type: "grant-port", side, skip: true })}>
+          {before ? "Use the key combo instead" : "Skip the check"}
+        </button>
       </div>
     </div>
   );
@@ -306,7 +319,7 @@ export function UpdateProgress({ view, keymap, layout, onAct }: { view: JobView;
       )}
       {view.updatePort && !portWithCombo && <UpdatePortPrompt side={view.updatePort} onAct={onAct} />}
       {view.drive && !driveWithCombo && <DrivePrompt side={view.drive} onAct={onAct} />}
-      {view.grantPort && <GrantPortPrompt side={view.grantPort.side} before={view.grantPort.before} onAct={onAct} />}
+      {view.grantPort && <GrantPortPrompt side={view.grantPort.side} before={view.grantPort.before} retry={view.grantPort.retry} onAct={onAct} />}
       {view.manualFlash && <ManualFlashGuide files={view.manualFlash} keymap={keymap} layout={layout} onAct={onAct} />}
 
       {view.done && (
