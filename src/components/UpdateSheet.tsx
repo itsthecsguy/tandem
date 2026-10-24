@@ -31,33 +31,38 @@ const PORT_NAME: Record<Side, string> = { left: "Adv360 Pro", right: "Adv360 Pro
 
 type Act = (a: JobAction) => void;
 
-/** The first-time setup's steps for both halves, so the user always knows how much is left. */
+/**
+ * The first-time setup's steps in the order they come: each half's update
+ * mode, right half first, then both halves' new ports at the end.
+ */
 function SetupChecklist({ hands, combos }: { hands: Record<Side, HandSteps>; combos: Record<Side, Combo | null> }) {
   const browser = api.caps.engine === "browser";
-  const items = (side: Side): [keyof HandSteps, string][] => [
-    ["keys", combos[side] ? "Press 2 keys" : "Press reset twice"],
-    ...(browser
-      ? ([
-          ["allow", "Connect ADV360PRO"],
-          ["port", `Connect ${PORT_NAME[side]}`],
-        ] as [keyof HandSteps, string][])
-      : []),
-  ];
+  const item = (side: Side, key: keyof HandSteps, label: string) => (
+    <li key={`${side}-${key}`} className={`is-${hands[side][key]}`}>
+      <MarkIcon mark={hands[side][key]} />
+      {label}
+    </li>
+  );
   return (
     <div className="checklist" aria-label="Your part of the setup">
       {(["right", "left"] as Side[]).map((side) => (
         <div key={side} className="checklist__half">
           <span className="checklist__name">{Half[side]}</span>
           <ol>
-            {items(side).map(([key, label]) => (
-              <li key={key} className={`is-${hands[side][key]}`}>
-                <MarkIcon mark={hands[side][key]} />
-                {label}
-              </li>
-            ))}
+            {item(side, "keys", combos[side] ? "Press 2 keys" : "Press reset twice")}
+            {browser && item(side, "allow", "Connect ADV360PRO")}
           </ol>
         </div>
       ))}
+      {browser && (
+        <div className="checklist__half checklist__last">
+          <span className="checklist__name">Last step, once both halves have the firmware</span>
+          <ol>
+            {item("right", "port", `Connect ${PORT_NAME.right}`)}
+            {item("left", "port", `Connect ${PORT_NAME.left}`)}
+          </ol>
+        </div>
+      )}
     </div>
   );
 }
@@ -267,16 +272,16 @@ function GrantPortPrompt({ side, before, retry, studioPaired, onAct }: { side: S
     ? `Pick the other ${PORT_NAME[side]}`
     : before
       ? `Connect the ${HALF[side]}`
-      : `Connect the ${HALF[side]}'s Tandem port`;
+      : `Connect the ${HALF[side]}'s new port`;
   const why = retry
-    ? `That wasn't the ${HALF[side]}'s Tandem port, so Chrome needs one more pick.`
+    ? `That wasn't the ${HALF[side]}'s new port, so Chrome needs one more pick.`
     : before
       ? `This browser can't see the ${HALF[side]} yet. Connect it once, and Tandem restarts the half by itself, with no keys to press.`
-      : `The ${HALF[side]} now runs Tandem firmware. Connecting its port lets Tandem restart it for every update from now on, so you won't press keys again.`;
+      : `Both halves have Tandem firmware now, which gives each half a new port. Chrome needs your OK once for each, and then Tandem restarts the halves by itself for every update, with no keys to press.`;
   return (
     <div className="guide">
       <div className="guide__head">
-        <span className="guide__badge">{before ? `${Half[side]} · once in this browser` : `${Half[side]} · last step`}</span>
+        <span className="guide__badge">{before ? `${Half[side]} · once in this browser` : "Last step"}</span>
         <h3>{heading}</h3>
         <p>{why}</p>
       </div>

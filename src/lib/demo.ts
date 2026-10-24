@@ -26,11 +26,20 @@ const base: JobEvent[] = [
   { type: "step", step: "prepare", state: "done", detail: "Both halves connected" },
 ];
 
-const rightDone: JobEvent[] = [
-  { type: "manual", side: "right", reason: "no-autoflash" },
-  { type: "update-port", side: "right" },
-  { type: "update-port-done", side: "right" },
-  { type: "manual-done", side: "right" },
+/** A half on stock firmware through its key combo and update port, flashed but not yet connected. */
+const flashed = (side: Side): JobEvent[] => [
+  { type: "manual", side, reason: "no-autoflash" },
+  { type: "update-port", side },
+  { type: "update-port-done", side },
+  { type: "manual-done", side },
+  { type: "step", step: `flash-${side}`, state: "done", detail: "Firmware sent" },
+];
+
+/** Both halves flashed, and the right half's new port connected. */
+const rightConnected: JobEvent[] = [
+  ...flashed("right"),
+  ...flashed("left"),
+  { type: "step", step: "verify", state: "active", detail: "Waiting for the right half's new port" },
   { type: "grant-port", side: "right" },
   { type: "grant-port-done", side: "right" },
   { type: "step", step: "flash-right", state: "done", detail: `Running ${BUILD}` },
@@ -81,8 +90,9 @@ const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
     running: true,
     events: [
       ...base,
-      ...rightDone.slice(0, 4),
-      { type: "step", step: "flash-right", state: "active", detail: "Restarting" },
+      ...flashed("right"),
+      ...flashed("left"),
+      { type: "step", step: "verify", state: "active", detail: "Waiting for the right half's new port" },
       { type: "grant-port", side: "right" },
     ],
   },
@@ -90,12 +100,8 @@ const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
     running: true,
     events: [
       ...base,
-      ...rightDone,
-      { type: "manual", side: "left", reason: "no-autoflash" },
-      { type: "update-port", side: "left" },
-      { type: "update-port-done", side: "left" },
-      { type: "manual-done", side: "left" },
-      { type: "step", step: "flash-left", state: "active", detail: "Restarting" },
+      ...rightConnected,
+      { type: "step", step: "verify", state: "active", detail: "Waiting for the left half's new port" },
       { type: "grant-port", side: "left", studioPaired: true },
     ],
   },
@@ -103,12 +109,8 @@ const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
     running: true,
     events: [
       ...base,
-      ...rightDone,
-      { type: "manual", side: "left", reason: "no-autoflash" },
-      { type: "update-port", side: "left" },
-      { type: "update-port-done", side: "left" },
-      { type: "manual-done", side: "left" },
-      { type: "step", step: "flash-left", state: "active", detail: "Restarting" },
+      ...rightConnected,
+      { type: "step", step: "verify", state: "active", detail: "Waiting for the left half's new port" },
       { type: "grant-port", side: "left", studioPaired: false },
       { type: "grant-port-done", side: "left" },
       { type: "grant-port", side: "left", retry: true, studioPaired: true },
@@ -142,9 +144,9 @@ const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
     running: false,
     events: [
       ...base,
-      ...rightDone,
-      { type: "manual", side: "left", reason: "no-autoflash" },
-      { type: "manual-done", side: "left" },
+      ...rightConnected,
+      { type: "grant-port", side: "left", studioPaired: true },
+      { type: "grant-port-done", side: "left" },
       { type: "step", step: "flash-left", state: "done", detail: `Running ${BUILD}` },
       { type: "step", step: "verify", state: "done", detail: `Both halves run ${BUILD}` },
       { type: "done", build: BUILD, checked: true },
@@ -281,20 +283,32 @@ export function demoEngine(real: Engine): Engine {
     }
     emit({ type: "step", step: targetStep, state: "active", detail: "Restarting" });
     await sleep(1200);
-    let studioPaired = !(wrong === "port" && target === "left");
-    for (let attempt = 0; ; attempt++) {
-      emit({ type: "grant-port", side: target, retry: attempt > 0, ...(target === "left" && { studioPaired }) });
-      const reply = await until("grant-port", target);
-      emit({ type: "grant-port-done", side: target });
-      if (reply.type === "grant-port" && reply.skip) break;
-      await sleep(600);
-      if (studioPaired) break;
-      // The first pick was ZMK Studio's port, which Chrome now marks Paired.
-      studioPaired = true;
-    }
-    emit({ type: "step", step: targetStep, state: "done", detail: `Running ${BUILD}` });
-    setDevices(target === "left" ? devicesFor(tandemHalf("left"), devices.right) : devicesFor(devices.left, tandemHalf("right")));
+    emit({ type: "step", step: targetStep, state: "done", detail: "Firmware sent" });
     return target;
+  }
+
+  /** The last step: each half's new port, the way serial-keyboard.ts asks for them. */
+  async function connectPorts() {
+    let studioPaired = wrong !== "port";
+    for (const side of ["right", "left"] as Side[]) {
+      let skipped = false;
+      for (let missed = false; ; ) {
+        emit({ type: "step", step: "verify", state: "active", detail: `Waiting for the ${side} half's new port` });
+        emit({ type: "grant-port", side, retry: missed, ...(side === "left" && { studioPaired }) });
+        const reply = await until("grant-port", side);
+        emit({ type: "grant-port-done", side });
+        skipped = reply.type === "grant-port" && !!reply.skip;
+        if (skipped) break;
+        await sleep(600);
+        // With &wrong=port, the first pick for the left half is ZMK Studio's port, which Chrome then marks Paired.
+        missed = side === "left" && !studioPaired;
+        if (!missed) break;
+        studioPaired = true;
+      }
+      if (skipped) continue;
+      emit({ type: "step", step: `flash-${side}`, state: "done", detail: `Running ${BUILD}` });
+      setDevices(side === "left" ? devicesFor(tandemHalf("left"), devices.right) : devicesFor(devices.left, tandemHalf("right")));
+    }
   }
 
   async function play() {
@@ -309,9 +323,10 @@ export function demoEngine(real: Engine): Engine {
     emit({ type: "step", step: "prepare", state: "done", detail: "Neither half runs Tandem firmware yet" });
     let todo: Side[] = ["right", "left"];
     for (let round = 0; todo.length; round++) {
-      const flashed = await half(todo[0], round === 0);
-      todo = todo.filter((s) => s !== flashed);
+      const done = await half(todo[0], round === 0);
+      todo = todo.filter((s) => s !== done);
     }
+    await connectPorts();
     emit({ type: "step", step: "verify", state: "done", detail: `Both halves run ${BUILD}` });
     emit({ type: "done", build: BUILD, checked: true });
   }

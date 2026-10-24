@@ -283,6 +283,12 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     }
   }
 
+  /** Waits up to `ms` for every half to leave update mode. */
+  async function waitForNoBootPort(ms: number, signal: AbortSignal) {
+    const deadline = Date.now() + ms;
+    while ((await bootPorts()).length && Date.now() < deadline) await sleep(timing.pollMs, signal);
+  }
+
   /** A half is visible: its Tandem port, or for the left half, ZMK Studio's. */
   function visible(side: Side): boolean {
     return !!tandemPort(side) || (side === "left" && otherPorts().length > 0);
@@ -351,7 +357,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     ready: Method | null,
     /** Halves that ran Tandem firmware when the update started. */
     tandemAtStart: Side[],
-  ): Promise<{ flashed: Side; checked: boolean }> {
+  ): Promise<{ flashed: Side; checked: boolean; newPort: boolean }> {
     let step = `flash-${side}` as const;
     let found = ready ? null : tandemPort(side);
     // The browser can't see a port nobody allowed. When the other half
@@ -368,6 +374,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     }
 
     const byHand = !ready && !found;
+    const thisWasUp = visible(side);
     const otherWasUp = visible(other);
     const otherTandem = tandemPort(other);
     if (ready) {
@@ -389,11 +396,13 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     let target = side;
     if (byHand) {
       // Both halves look the same in update mode. If the other half went
-      // quiet, the key combo landed on it: update that half now, and the
-      // caller comes back for this one.
+      // quiet, or this one is still up, the key combo landed on the other
+      // half: update that one now, and the caller comes back for this one.
+      // Either check needs a half the browser could see before, which during
+      // first-time setup is the left half's ZMK Studio port.
       await refresh(true);
       emit({ type: "manual-done", side });
-      if (otherWasUp && !visible(other)) {
+      if ((otherWasUp && !visible(other)) || (thisWasUp && visible(side))) {
         target = other;
         found = otherTandem;
         emit({ type: "step", step, state: "pending", detail: "Next" });
@@ -420,22 +429,70 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       await copyTo(method.found, target, build[target], emit, signal);
     }
     emit({ type: "step", step, state: "active", detail: "Restarting" });
+    // Until the half leaves update mode, its update port could pass for the
+    // next half's.
+    await waitForNoBootPort(timing.bootMs, signal);
 
-    // A half that had no Tandem port comes back with one the browser hasn't
-    // been allowed to open, so don't wait long before asking.
-    let back = await comeback(target, build.id, found ? timing.comebackMs : timing.newPortMs, signal);
-    // The left half lists two ports with the same name, so a first pick can be
-    // ZMK Studio's. Ask again, saying so, a couple of times.
-    for (let attempt = 0; !back && !found && attempt < 3; attempt++) {
-      emit({ type: "grant-port", side: target, retry: attempt > 0, ...(target === "left" && { studioPaired: otherPorts().length > 0 }) });
-      const granted = await waitFor<boolean>({ type: "grant-port", side: target }, signal);
-      emit({ type: "grant-port-done", side: target });
-      if (!granted) break;
-      back = await comeback(target, build.id, timing.newPortMs, signal);
-    }
+    // A half on its first Tandem firmware comes back with a port the browser
+    // hasn't been allowed to open. The caller asks for it once every half is
+    // flashed. Chrome may allow it already when it allowed another port of
+    // the same half, so give a half it could see before a moment to show up.
+    const targetWasUp = target === side ? thisWasUp : otherWasUp;
+    const back = await comeback(target, build.id, found ? timing.comebackMs : targetWasUp ? timing.newPortMs : 0, signal);
     if (back && back.build !== build.id) throw new Error(`The ${target} half is running build ${back.build}, expected ${build.id}.`);
-    emit({ type: "step", step, state: "done", detail: back ? `Running ${build.id}` : "Copied, but the browser couldn't ask it" });
-    return { flashed: target, checked: !!back };
+    const newPort = !back && !found;
+    emit({
+      type: "step",
+      step,
+      state: "done",
+      detail: back ? `Running ${build.id}` : newPort ? "Firmware sent" : "Copied, but the browser couldn't ask it",
+    });
+    return { flashed: target, checked: !!back, newPort };
+  }
+
+  /** Waits up to `ms` for any of `sides` to report the build. Returns the ones that did. */
+  async function backAmong(sides: Side[], buildId: string, ms: number, signal: AbortSignal): Promise<Side[]> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      await withTimeout(refresh(), 5000, "Looking for the half").catch(() => {});
+      const back = sides.filter((s) => tandemPort(s)?.[1].build === buildId);
+      if (back.length || Date.now() >= deadline) return back;
+      await sleep(timing.pollMs, signal);
+    }
+  }
+
+  /**
+   * Asks for freshly flashed halves' new ports, one pick at a time, until
+   * each reports the build. Chrome lists every new port, so a pick can be the
+   * other half's, which counts too. A pick that brings nothing back was
+   * likely the left half's ZMK Studio port, so the next ask says so. Returns
+   * the halves that came back.
+   */
+  async function connectNewPorts(sides: Side[], build: Build, emit: Parameters<Flash>[1], signal: AbortSignal): Promise<Side[]> {
+    await refresh(true);
+    let pending = sides.filter((s) => tandemPort(s)?.[1].build !== build.id);
+    const done = (back: Side[]) => {
+      for (const side of back) emit({ type: "step", step: `flash-${side}`, state: "done", detail: `Running ${build.id}` });
+      pending = pending.filter((s) => !back.includes(s));
+    };
+    done(sides.filter((s) => !pending.includes(s)));
+    for (let misses = 0, missed = false; pending.length && misses < 3; ) {
+      const side = pending[0];
+      emit({ type: "step", step: "verify", state: "active", detail: `Waiting for the ${side} half's new port` });
+      emit({ type: "grant-port", side, retry: missed, ...(side === "left" && { studioPaired: otherPorts().length > 0 }) });
+      const granted = await waitFor<boolean>({ type: "grant-port", side }, signal);
+      emit({ type: "grant-port-done", side });
+      if (!granted) break;
+      const back = await backAmong(pending, build.id, timing.newPortMs, signal);
+      missed = !back.length;
+      if (missed) misses++;
+      done(back);
+    }
+    for (const side of pending) {
+      const seen = tandemPort(side)?.[1];
+      if (seen) throw new Error(`The ${side} half is running build ${seen.build}, expected ${build.id}.`);
+    }
+    return sides.filter((s) => !pending.includes(s));
   }
 
   const flash: Flash = async (build, emit, signal) => {
@@ -466,6 +523,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     // A key combo can land on the other half, which then gets updated first,
     // so keep going until both are done. Each round needs the user's hands.
     const checked: Partial<Record<Side, boolean>> = {};
+    const newPorts = new Set<Side>();
     let todo = waiting ? [waiting.side, ...SIDES.filter((s) => s !== waiting!.side)] : SIDES;
     for (let round = 0; todo.length; round++) {
       if (round >= 4) throw new Error(`The key combo kept putting the wrong half in update mode. Check which half you press it on, then update again.`);
@@ -473,7 +531,16 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       const result = await flashHalf(side, build, emit, signal, side === waiting?.side ? waiting.method : null, tandem);
       waiting = null;
       checked[result.flashed] = result.checked;
+      if (result.newPort) newPorts.add(result.flashed);
+      else newPorts.delete(result.flashed);
       todo = todo.filter((s) => s !== result.flashed);
+    }
+    // New ports last, so setup goes right half, left half, then the ports,
+    // instead of stopping between the halves to connect one.
+    const fresh = SIDES.filter((s) => newPorts.has(s));
+    if (fresh.length) {
+      const back = await connectNewPorts(fresh, build, emit, signal);
+      for (const side of fresh) checked[side] = back.includes(side);
     }
     const all = !!(checked.left && checked.right);
     emit({ type: "step", step: "verify", state: all ? "done" : "skipped", detail: all ? `Both halves run ${build.id}` : "The browser couldn't ask every half" });

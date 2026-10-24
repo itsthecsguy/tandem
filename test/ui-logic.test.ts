@@ -102,11 +102,22 @@ describe("viewJob's setup checklist", () => {
 
   it("checks off a half that finished without asking, and clears what was in progress on an error", () => {
     const v = view([
-      { type: "step", step: "flash-right", state: "done" },
+      { type: "step", step: "flash-right", state: "done", detail: "Running abc1234" },
       { type: "manual", side: "left", reason: "no-autoflash" },
       { type: "error", message: "Cancelled" },
     ]);
     expect(v.hands.right).toEqual({ keys: "done", allow: "done", port: "done" });
     expect(v.hands.left.keys).toBe("todo");
+  });
+
+  it("leaves a freshly flashed half's new port for the end", () => {
+    const v = view([
+      { type: "manual", side: "right", reason: "no-autoflash" },
+      { type: "update-port", side: "right" },
+      { type: "update-port-done", side: "right" },
+      { type: "manual-done", side: "right" },
+      { type: "step", step: "flash-right", state: "done", detail: "Firmware sent" },
+    ]);
+    expect(v.hands.right).toEqual({ keys: "done", allow: "done", port: "todo" });
   });
 });

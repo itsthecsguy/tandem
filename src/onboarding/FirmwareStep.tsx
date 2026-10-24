@@ -185,38 +185,46 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
       </p>
 
       <h2 className="ob__subhead">What you'll do</h2>
-      <p className="ob__para">
-        First GitHub builds your firmware, which takes about 3 minutes. Then Tandem asks for the right half, then the left half. For each
-        one:
-      </p>
-      <ol className="ob__plan">
-        <li>
-          <span>
-            <strong>Press two keys on the keyboard.</strong> Tandem lights them up on a picture of your layout.
-          </span>
-        </li>
-        {browser ? (
-          <>
+      {browser ? (
+        <>
+          <p className="ob__para">First GitHub builds your firmware, which takes about 3 minutes. Then:</p>
+          <ol className="ob__plan">
             <li>
               <span>
-                <strong>Connect ADV360PRO in Chrome.</strong> Chrome opens a list with one entry. Pick it and click Connect.
+                <strong>Right half: press two keys, then connect ADV360PRO in Chrome.</strong> Tandem lights the keys up on a picture of your
+                layout, and Chrome's list has one entry. The firmware goes on as soon as you connect.
               </span>
             </li>
             <li>
               <span>
-                <strong>Connect the half's Tandem port in Chrome.</strong> A second list opens once the firmware is on. Tandem tells you which
-                entry to pick.
+                <strong>Left half: the same two steps.</strong>
               </span>
             </li>
-          </>
-        ) : (
-          <li>
-            <span>
-              <strong>Wait while Tandem copies the firmware.</strong> It checks that the half comes back running it.
-            </span>
-          </li>
-        )}
-      </ol>
+            <li>
+              <span>
+                <strong>Connect the new ports in Chrome.</strong> Once both halves have the firmware, Chrome asks once for each half's new
+                port, and Tandem names the entry to pick.
+              </span>
+            </li>
+          </ol>
+        </>
+      ) : (
+        <>
+          <p className="ob__para">First GitHub builds your firmware, which takes about 3 minutes. Then, right half first, for each half:</p>
+          <ol className="ob__plan">
+            <li>
+              <span>
+                <strong>Press two keys on the keyboard.</strong> Tandem lights them up on a picture of your layout.
+              </span>
+            </li>
+            <li>
+              <span>
+                <strong>Wait while Tandem copies the firmware.</strong> It checks that the half comes back running it.
+              </span>
+            </li>
+          </ol>
+        </>
+      )}
 
       <ul className="ob__notes">
         <li>Keep both halves plugged in with USB cables until setup is done.</li>

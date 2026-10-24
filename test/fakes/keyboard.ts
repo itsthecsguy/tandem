@@ -298,6 +298,8 @@ export class FakeKeyboard implements SerialLike {
   pickerOpened = 0;
   /** The next this many port picks land on a port that's already allowed, like a wrong pick in Chrome's list. */
   wrongPicks = 0;
+  /** The half whose port the user looks for in Chrome's list, by the name Tandem gave. Without it, the first new port. */
+  lookingFor: "left" | "right" | null = null;
   private listeners: Record<string, (() => void)[]> = { connect: [], disconnect: [] };
 
   constructor(options: { left: { build: string | null; studio?: boolean }; right: { build: string | null } }) {
@@ -348,7 +350,9 @@ export class FakeKeyboard implements SerialLike {
         return paired;
       }
     }
-    const port = present.find((p) => !this.allowed.has(p));
+    const fresh = present.filter((p) => !this.allowed.has(p));
+    const wanted = this.lookingFor && this[this.lookingFor].ports();
+    const port = fresh.find((p) => wanted?.includes(p)) ?? fresh[0];
     if (!port) throw new DOMException("No port selected by the user.", "NotFoundError");
     this.allowed.add(port);
     setTimeout(() => this.fire("connect"), 1);

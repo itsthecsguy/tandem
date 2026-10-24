@@ -75,6 +75,8 @@ interface Pilot {
   skipPortFirst?: boolean;
   /** For these key combo requests, counted from 0, press the combo on the other half. */
   wrongHalf?: number[];
+  /** In Chrome's list, pick the first new port instead of the one Tandem names. */
+  anyPort?: boolean;
 }
 
 /** Plays the user: does what each prompt asks, as it comes. */
@@ -88,7 +90,10 @@ function autopilot(engine: Engine, events: JobEvent[], kb: FakeKeyboard, pilot: 
       if (e.type === "manual") kb[pilot.wrongHalf?.includes(combos++) ? (e.side === "left" ? "right" : "left") : e.side].pressCombo();
       if (e.type === "update-port") later(() => engine.act(pilot.preferDrive ? { type: "pick-drive", side: e.side } : { type: "grant-update-port", side: e.side }));
       if (e.type === "drive") later(() => engine.act({ type: "pick-drive", side: e.side }));
-      if (e.type === "grant-port") engine.act({ type: "grant-port", side: e.side, skip: !!(e.before && pilot.skipPortFirst) });
+      if (e.type === "grant-port") {
+        kb.lookingFor = pilot.anyPort ? null : e.side;
+        engine.act({ type: "grant-port", side: e.side, skip: !!(e.before && pilot.skipPortFirst) });
+      }
     }
   }, 5);
   return () => clearInterval(timer);
@@ -170,8 +175,25 @@ describe("Web Serial keyboard", () => {
     expect(sides(events, "manual")).toEqual(["right", "left"]);
     expect(sides(events, "update-port")).toEqual(["right", "left"]);
     expect(sides(events, "grant-port")).toEqual(["right", "left"]);
+    // The new ports come last, after both halves have their firmware.
+    const lastFlash = events.findLastIndex((e) => e.type === "update-port-done");
+    expect(events.findIndex((e) => e.type === "grant-port")).toBeGreaterThan(lastFlash);
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "grant-port", retry: true }));
     expect(kb.pickerOpened).toBe(0);
     expect(access.devices().left.autoflash && access.devices().right.autoflash).toBe(true);
+  });
+
+  it("takes the other half's new port when that's the one picked", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.allowAll();
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().left.mode === "app");
+    // Asked for the right half's port, the user picks the left half's first.
+    expect(await run(engine, events, kb, { anyPort: true }, false)).toMatchObject({ type: "done", checked: true });
+    expect(events.filter((e) => e.type === "grant-port")).toEqual([
+      { type: "grant-port", side: "right", retry: false },
+      { type: "grant-port", side: "right", retry: false },
+    ]);
   });
 
   it("asks again when the user picks the wrong port in Chrome's list", async () => {

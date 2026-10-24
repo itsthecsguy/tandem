@@ -20,7 +20,7 @@ export interface HandSteps {
   keys: Mark;
   /** Connect its update port, ADV360PRO, in Chrome's list. */
   allow: Mark;
-  /** Connect its new Tandem port in Chrome's list. */
+  /** Connect its new Tandem port in Chrome's list, once both halves are flashed. */
   port: Mark;
 }
 
@@ -79,8 +79,12 @@ export function viewJob(job: JobSnapshot): JobView {
       case "step":
         view.steps[e.step] = { state: e.state, detail: e.detail };
         if (e.step === "prepare" && e.state === "done") view.plugIn = null;
-        if (e.step === "flash-left" && e.state === "done") view.hands.left = { keys: "done", allow: "done", port: "done" };
-        if (e.step === "flash-right" && e.state === "done") view.hands.right = { keys: "done", allow: "done", port: "done" };
+        if ((e.step === "flash-left" || e.step === "flash-right") && e.state === "done") {
+          // A half on its first Tandem firmware is done flashing before its new port is connected.
+          const side = e.step === "flash-left" ? "left" : "right";
+          const answered = !!e.detail?.startsWith("Running");
+          view.hands[side] = { keys: "done", allow: "done", port: answered ? "done" : view.hands[side].port };
+        }
         break;
       case "log":
         view.logs.push(e.line);

@@ -1315,6 +1315,16 @@ code {
   color: var(--ok);
 }
 
+.checklist__last {
+  grid-column: 1 / -1;
+}
+
+.checklist__last ol {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+}
+
 .checklist__now {
   flex: none;
   width: 14px;
