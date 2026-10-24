@@ -1208,9 +1208,18 @@ code {
 
 .guide__body {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
-  align-items: center;
-  gap: 16px;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.guide__board .keyboard {
+  display: block;
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+.key__label {
+  font-weight: 700;
 }
 
 .guide__body--single {
@@ -1247,6 +1256,95 @@ code {
   margin: 0;
   color: var(--text-2);
   font-size: var(--fs-sm);
+}
+
+/* First-time setup: the user's steps for each half, and what Tandem is doing between them. */
+
+.checklist {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.checklist__half {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.checklist__name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.checklist ol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checklist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+.checklist li svg {
+  flex: none;
+}
+
+.checklist li.is-now {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.checklist li.is-done {
+  color: var(--text-2);
+}
+
+.checklist li.is-done svg {
+  color: var(--ok);
+}
+
+.checklist__now {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-ring);
+}
+
+.setup-wait {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-md);
+}
+
+.setup-wait svg {
+  flex: none;
+  margin-top: 3px;
+}
+
+@media (max-width: 560px) {
+  .checklist {
+    grid-template-columns: 1fr;
+  }
 }
 
 .log summary {
@@ -2122,6 +2220,35 @@ code {
 .ob__plan strong {
   color: var(--text);
   font-weight: 600;
+}
+
+.ob__subhead {
+  margin: 8px 0 -4px;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.ob__para {
+  max-width: 600px;
+  margin: 0;
+  color: var(--text-2);
+  line-height: 1.55;
+}
+
+.ob__notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 640px;
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+
+.callout.connect-ports {
+  max-width: 640px;
 }
 
 /* Keyboard step */

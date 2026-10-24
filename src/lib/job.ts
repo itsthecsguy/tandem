@@ -12,6 +12,20 @@ export const STEP_TITLES: Record<StepId, string> = {
   verify: "Check both halves",
 };
 
+export type Mark = "todo" | "now" | "done";
+
+/** What a first-time setup asks of the user for one half, in order. */
+export interface HandSteps {
+  /** Put the half in update mode with its key combo. */
+  keys: Mark;
+  /** Connect its update port, ADV360PRO, in Chrome's list. */
+  allow: Mark;
+  /** Connect its new Tandem port in Chrome's list. */
+  port: Mark;
+}
+
+const fresh = (): HandSteps => ({ keys: "todo", allow: "todo", port: "todo" });
+
 export interface JobView {
   steps: Record<StepId, { state: StepState; detail?: string }>;
   manual: { side: Side; reason: "no-autoflash" | "no-response" } | null;
@@ -21,7 +35,11 @@ export interface JobView {
   /** The browser needs the user's OK, once, to open this half's update port. */
   updatePort: Side | null;
   /** The browser needs the user to allow this half's port, before or after flashing it. */
-  grantPort: { side: Side; before: boolean; retry: boolean } | null;
+  grantPort: { side: Side; before: boolean; retry: boolean; studioPaired: boolean } | null;
+  /** First-time setup's steps for each half. */
+  hands: Record<Side, HandSteps>;
+  /** The key combo landed on the other half, so Tandem updates that one first. */
+  switched: { from: Side; to: Side } | null;
   /** This browser can't reach the keyboard: the files to copy by hand. */
   manualFlash: { left: string; right: string } | null;
   logs: string[];
@@ -44,6 +62,8 @@ export function viewJob(job: JobSnapshot): JobView {
     drive: null,
     updatePort: null,
     grantPort: null,
+    hands: { left: fresh(), right: fresh() },
+    switched: null,
     manualFlash: null,
     logs: [],
     runUrl: null,
@@ -59,6 +79,8 @@ export function viewJob(job: JobSnapshot): JobView {
       case "step":
         view.steps[e.step] = { state: e.state, detail: e.detail };
         if (e.step === "prepare" && e.state === "done") view.plugIn = null;
+        if (e.step === "flash-left" && e.state === "done") view.hands.left = { keys: "done", allow: "done", port: "done" };
+        if (e.step === "flash-right" && e.state === "done") view.hands.right = { keys: "done", allow: "done", port: "done" };
         break;
       case "log":
         view.logs.push(e.line);
@@ -68,10 +90,18 @@ export function viewJob(job: JobSnapshot): JobView {
         break;
       case "manual":
         view.manual = { side: e.side, reason: e.reason };
+        view.hands[e.side].keys = "now";
+        view.switched = null;
         if (e.reason === "no-autoflash") view.setup = true;
         break;
       case "manual-done":
         if (view.manual?.side === e.side) view.manual = null;
+        view.hands[e.side].keys = "done";
+        break;
+      case "switched":
+        view.switched = { from: e.from, to: e.to };
+        view.hands[e.to] = { ...view.hands[e.to], keys: "done", allow: "done" };
+        view.hands[e.from] = { ...view.hands[e.from], keys: "todo", allow: "todo" };
         break;
       case "plug-in":
         view.plugIn = e.side;
@@ -85,16 +115,21 @@ export function viewJob(job: JobSnapshot): JobView {
         break;
       case "update-port":
         view.updatePort = e.side;
+        view.hands[e.side].allow = "now";
         break;
       case "update-port-done":
         if (view.updatePort === e.side) view.updatePort = null;
         if (view.manual?.side === e.side) view.manual = null;
+        view.hands[e.side].keys = "done";
+        view.hands[e.side].allow = "done";
         break;
       case "grant-port":
-        view.grantPort = { side: e.side, before: !!e.before, retry: !!e.retry };
+        view.grantPort = { side: e.side, before: !!e.before, retry: !!e.retry, studioPaired: !!e.studioPaired };
+        if (!e.before) view.hands[e.side].port = "now";
         break;
       case "grant-port-done":
         if (view.grantPort?.side === e.side) view.grantPort = null;
+        if (view.hands[e.side].port === "now") view.hands[e.side].port = "done";
         break;
       case "manual-flash":
         view.manualFlash = { left: e.left, right: e.right };
@@ -118,6 +153,10 @@ export function viewJob(job: JobSnapshot): JobView {
         view.updatePort = null;
         view.grantPort = null;
         view.manualFlash = null;
+        view.switched = null;
+        for (const side of ["left", "right"] as const) {
+          for (const k of ["keys", "allow", "port"] as const) if (view.hands[side][k] === "now") view.hands[side][k] = "todo";
+        }
         for (const s of STEP_ORDER) if (view.steps[s].state === "active") view.steps[s].state = "error";
         break;
     }

@@ -149,7 +149,7 @@ export function Keyboard({
             <rect className="key__shadow" x={x} y={y + 1.5} width={w} height={h} rx={9} />
             <rect className="key__cap" x={x} y={y} width={w} height={h} rx={9} />
             {compact && labels?.[k.index] && (
-              <text className="key__tap" x={x + w / 2} y={y + h / 2 + 1} fontSize={15}>
+              <text className="key__tap key__label" x={x + w / 2} y={y + h / 2 + 1} fontSize={26}>
                 {labels[k.index]}
               </text>
             )}

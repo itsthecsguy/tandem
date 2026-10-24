@@ -54,7 +54,7 @@ export function Onboarding({ session, onSession }: { session: Session; onSession
       detail: session.repo ? `${session.repo.owner}/${session.repo.name}` : "Choose where it lives",
       done: repoReady,
     },
-    { id: "firmware", title: "Firmware", detail: "Install Tandem once", done: false },
+    { id: "firmware", title: "Firmware", detail: "One-time setup", done: false },
   ];
   const index = steps.findIndex((s) => s.id === current);
 

@@ -73,18 +73,19 @@ interface Pilot {
   preferDrive?: boolean;
   /** Turn down Tandem's offer to allow a port before a key combo. */
   skipPortFirst?: boolean;
-  /** Press the key combo on this half, whichever half Tandem asks for. */
-  comboOn?: "left" | "right";
+  /** For these key combo requests, counted from 0, press the combo on the other half. */
+  wrongHalf?: number[];
 }
 
 /** Plays the user: does what each prompt asks, as it comes. */
 function autopilot(engine: Engine, events: JobEvent[], kb: FakeKeyboard, pilot: Pilot = {}) {
   let seen = 0;
+  let combos = 0;
   const later = (fn: () => unknown) => setTimeout(() => void Promise.resolve(fn()).catch(() => {}), 30);
   const timer = setInterval(() => {
     for (; seen < events.length; seen++) {
       const e = events[seen];
-      if (e.type === "manual") kb[pilot.comboOn ?? e.side].pressCombo();
+      if (e.type === "manual") kb[pilot.wrongHalf?.includes(combos++) ? (e.side === "left" ? "right" : "left") : e.side].pressCombo();
       if (e.type === "update-port") later(() => engine.act(pilot.preferDrive ? { type: "pick-drive", side: e.side } : { type: "grant-update-port", side: e.side }));
       if (e.type === "drive") later(() => engine.act({ type: "pick-drive", side: e.side }));
       if (e.type === "grant-port") engine.act({ type: "grant-port", side: e.side, skip: !!(e.before && pilot.skipPortFirst) });
@@ -185,16 +186,31 @@ describe("Web Serial keyboard", () => {
     expect(access.devices().left.autoflash && access.devices().right.autoflash).toBe(true);
   });
 
-  it("stops when the key combo puts the other half in update mode", async () => {
+  it("updates the other half first when the key combo lands on it", async () => {
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
     kb.allowAll();
     kb.allowUpdatePorts();
     const { engine, access, events } = await setup(kb);
     await until(() => access.devices().left.mode === "app");
-    const end = await run(engine, events, kb, { comboOn: "left" }, false);
-    expect(end).toMatchObject({ type: "error", message: expect.stringMatching(/left half went into update mode instead of the right half/) });
-    expect(kb.left.flashedWith).toBeNull();
-    expect(kb.right.flashedWith).toBeNull();
+    const end = await run(engine, events, kb, { wrongHalf: [0] }, false);
+    const build = github.head("octocat", "adv360").slice(0, 7);
+    expect(end).toEqual({ type: "done", build, checked: true });
+    expect(events).toContainEqual({ type: "switched", from: "right", to: "left" });
+    expect(kb.left.flashedWith).toBe(`left-clique:${build}`);
+    expect(kb.right.flashedWith).toBe(`right-clique:${build}`);
+    expect(sides(events, "manual")).toEqual(["right", "right"]);
+  });
+
+  it("updates a finished half again when the key combo lands on it, then asks for the other", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.allowAll();
+    kb.allowUpdatePorts();
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().left.mode === "app");
+    // Right goes as asked. Then the combo meant for the left lands on the right.
+    expect(await run(engine, events, kb, { wrongHalf: [1] }, false)).toMatchObject({ type: "done", checked: true });
+    expect(events).toContainEqual({ type: "switched", from: "left", to: "right" });
+    expect(sides(events, "manual")).toEqual(["right", "left", "left"]);
   });
 
   it("copies to the drive instead when the user prefers", async () => {

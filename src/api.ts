@@ -18,6 +18,8 @@ export async function initApi(): Promise<void> {
   const forced = new URLSearchParams(location.search).get("engine");
   const helper = forced ? forced === "helper" : await helperServesThisPage();
   api = helper ? helperEngine() : browserEngine(keyboardAccess());
+  // Fake data for reviewing the UI: see lib/demo.ts. Dropped from production builds.
+  if (import.meta.env.DEV && new URLSearchParams(location.search).has("demo")) api = (await import("./lib/demo")).demoEngine(api);
 }
 
 async function helperServesThisPage(): Promise<boolean> {

@@ -351,8 +351,8 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     ready: Method | null,
     /** Halves that ran Tandem firmware when the update started. */
     tandemAtStart: Side[],
-  ): Promise<boolean> {
-    const step = `flash-${side}` as const;
+  ): Promise<{ flashed: Side; checked: boolean }> {
+    let step = `flash-${side}` as const;
     let found = ready ? null : tandemPort(side);
     // The browser can't see a port nobody allowed. When the other half
     // already ran Tandem firmware, this one probably does too, so ask for its
@@ -369,6 +369,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
 
     const byHand = !ready && !found;
     const otherWasUp = visible(other);
+    const otherTandem = tandemPort(other);
     if (ready) {
       emit({ type: "step", step, state: "active", detail: "Already in update mode" });
     } else if (found) {
@@ -385,50 +386,56 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     }
 
     const method = ready ?? (await updateMethod(side, !!found, emit, signal));
+    let target = side;
     if (byHand) {
-      // Both halves' update modes look the same. Make sure the user's key
-      // combo went to this half, not the other one.
+      // Both halves look the same in update mode. If the other half went
+      // quiet, the key combo landed on it: update that half now, and the
+      // caller comes back for this one.
       await refresh(true);
-      if (otherWasUp && !visible(other)) {
-        throw new Error(`The ${other} half went into update mode instead of the ${side} half. Press the ${other} half's reset button once, then update again.`);
-      }
       emit({ type: "manual-done", side });
+      if (otherWasUp && !visible(other)) {
+        target = other;
+        found = otherTandem;
+        emit({ type: "step", step, state: "pending", detail: "Next" });
+        step = `flash-${other}`;
+        emit({ type: "switched", from: side, to: other });
+      }
     }
 
     if (method.kind === "serial") {
       emit({ type: "step", step, state: "active", detail: "Sending firmware" });
       try {
-        await sendOverSerial(method.port, side, build[side], emit);
+        await sendOverSerial(method.port, target, build[target], emit);
       } catch (err) {
         // The half is still in update mode, so its drive works as a fallback.
         emit({ type: "step", step, state: "active", detail: `Sending over the update port failed (${(err as Error).message}). Copy it to the drive instead.` });
-        emit({ type: "drive", side });
-        const picked = await waitFor<DriveLike>({ type: "pick-drive", side }, signal);
-        emit({ type: "drive-done", side });
+        emit({ type: "drive", side: target });
+        const picked = await waitFor<DriveLike>({ type: "pick-drive", side: target }, signal);
+        emit({ type: "drive-done", side: target });
         emit({ type: "step", step, state: "active", detail: "Copying firmware" });
-        await copyTo({ drive: picked, picked: true }, side, build[side], emit, signal);
+        await copyTo({ drive: picked, picked: true }, target, build[target], emit, signal);
       }
     } else {
       emit({ type: "step", step, state: "active", detail: "Copying firmware" });
-      await copyTo(method.found, side, build[side], emit, signal);
+      await copyTo(method.found, target, build[target], emit, signal);
     }
     emit({ type: "step", step, state: "active", detail: "Restarting" });
 
     // A half that had no Tandem port comes back with one the browser hasn't
     // been allowed to open, so don't wait long before asking.
-    let back = await comeback(side, build.id, found ? timing.comebackMs : timing.newPortMs, signal);
+    let back = await comeback(target, build.id, found ? timing.comebackMs : timing.newPortMs, signal);
     // The left half lists two ports with the same name, so a first pick can be
     // ZMK Studio's. Ask again, saying so, a couple of times.
     for (let attempt = 0; !back && !found && attempt < 3; attempt++) {
-      emit({ type: "grant-port", side, retry: attempt > 0 });
-      const granted = await waitFor<boolean>({ type: "grant-port", side }, signal);
-      emit({ type: "grant-port-done", side });
+      emit({ type: "grant-port", side: target, retry: attempt > 0, ...(target === "left" && { studioPaired: otherPorts().length > 0 }) });
+      const granted = await waitFor<boolean>({ type: "grant-port", side: target }, signal);
+      emit({ type: "grant-port-done", side: target });
       if (!granted) break;
-      back = await comeback(side, build.id, timing.newPortMs, signal);
+      back = await comeback(target, build.id, timing.newPortMs, signal);
     }
-    if (back && back.build !== build.id) throw new Error(`The ${side} half is running build ${back.build}, expected ${build.id}.`);
+    if (back && back.build !== build.id) throw new Error(`The ${target} half is running build ${back.build}, expected ${build.id}.`);
     emit({ type: "step", step, state: "done", detail: back ? `Running ${build.id}` : "Copied, but the browser couldn't ask it" });
-    return !!back;
+    return { flashed: target, checked: !!back };
   }
 
   const flash: Flash = async (build, emit, signal) => {
@@ -456,13 +463,21 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       waiting = { side: silent[0], method: bootPort ? { kind: "serial", port: bootPort } : { kind: "drive", found: { drive: savedDrive!, picked: false } } };
     }
 
-    let checked = true;
-    const order = waiting ? [waiting.side, ...SIDES.filter((s) => s !== waiting!.side)] : SIDES;
-    for (const side of order) {
-      checked = (await flashHalf(side, build, emit, signal, side === waiting?.side ? waiting.method : null, tandem)) && checked;
+    // A key combo can land on the other half, which then gets updated first,
+    // so keep going until both are done. Each round needs the user's hands.
+    const checked: Partial<Record<Side, boolean>> = {};
+    let todo = waiting ? [waiting.side, ...SIDES.filter((s) => s !== waiting!.side)] : SIDES;
+    for (let round = 0; todo.length; round++) {
+      if (round >= 4) throw new Error(`The key combo kept putting the wrong half in update mode. Check which half you press it on, then update again.`);
+      const side = todo[0];
+      const result = await flashHalf(side, build, emit, signal, side === waiting?.side ? waiting.method : null, tandem);
+      waiting = null;
+      checked[result.flashed] = result.checked;
+      todo = todo.filter((s) => s !== result.flashed);
     }
-    emit({ type: "step", step: "verify", state: checked ? "done" : "skipped", detail: checked ? `Both halves run ${build.id}` : "The browser couldn't ask every half" });
-    return checked;
+    const all = !!(checked.left && checked.right);
+    emit({ type: "step", step: "verify", state: all ? "done" : "skipped", detail: all ? `Both halves run ${build.id}` : "The browser couldn't ask every half" });
+    return all;
   };
 
   const isMissing = (e: unknown) => e instanceof Error && (e.name === "NotFoundError" || e.name === "AbortError");

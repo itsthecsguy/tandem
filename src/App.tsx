@@ -14,7 +14,6 @@ import { Onboarding, needsOnboarding } from "./onboarding/Onboarding";
 import { RepoMenu } from "./components/RepoMenu";
 import { ThemeMenu } from "./components/ThemeMenu";
 import { UpdateSheet } from "./components/UpdateSheet";
-import { demoJob, demoSession } from "./lib/demo";
 import { viewJob } from "./lib/job";
 import { zmkCode } from "./lib/keyEvents";
 import { activatorSummary, layerActivators, layerColor } from "./lib/layers";
@@ -33,9 +32,7 @@ export function App() {
   const [sessionError, setSessionError] = useState<string | null>(null);
 
   useEffect(() => {
-    const demo = demoSession();
-    if (demo) setSession(demo);
-    else api.session().then(setSession, (e) => setSessionError(e.message));
+    api.session().then(setSession, (e) => setSessionError(e.message));
   }, []);
 
   if (!session) {
@@ -66,14 +63,16 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
   const [selected, setSelected] = useState<number | null>(null);
   const [pressed, setPressed] = useState<number | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [firstTime, setFirstTime] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [installing, setInstalling] = useState(false);
   const live = useLive();
   const { devices, connected } = live;
-  const [demo] = useState(demoJob);
-  const job = demo ?? live.job;
+  // Dev server demos (lib/demo.ts) open the sheet on whatever moment they show.
+  const [demo] = useState(() => import.meta.env.DEV && new URLSearchParams(location.search).has("demo"));
+  const job = live.job;
   const pressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -102,7 +101,7 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
 
   // Reopen the sheet for an update in progress or cut short by a reload, and refresh when one ends.
   useEffect(() => {
-    if (job?.running || job?.interrupted || demo) setSheetOpen(true);
+    if (job?.running || job?.interrupted || (demo && job)) setSheetOpen(true);
   }, [job?.id, job?.running, job?.interrupted, demo]);
   useEffect(() => {
     if (view?.done) load();
@@ -170,13 +169,15 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
 
   const update = useCallback(async () => {
     if (!draft) return;
+    // A half on other firmware makes this the one-time setup, which the sheet says from the start.
+    setFirstTime(!!devices && [devices.left, devices.right].some((h) => h.mode === "app" && !h.autoflash));
     setSheetOpen(true);
     try {
       await api.update(dirty ? draft : undefined);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [draft, dirty]);
+  }, [draft, dirty, devices]);
 
   // Keyboard: ⌘S saves, Esc deselects, and pressing a key selects it on the board.
   useEffect(() => {
@@ -421,6 +422,7 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
           view={view}
           keymap={draft}
           layout={state.layout}
+          firstTime={firstTime}
           onAct={(a) => api.act(a).catch((e: Error) => setError(e.message))}
           onCancel={() => api.cancel()}
           onClose={() => setSheetOpen(false)}

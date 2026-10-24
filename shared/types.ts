@@ -173,6 +173,8 @@ export type JobEvent =
   | { type: "run"; url: string }
   | { type: "manual"; side: Side; reason: "no-autoflash" | "no-response" }
   | { type: "manual-done"; side: Side }
+  /** The key combo put the other half in update mode, so that half is updated first. */
+  | { type: "switched"; from: Side; to: Side }
   | { type: "plug-in"; side: Side }
   /** The browser needs the user to choose this half's update drive. */
   | { type: "drive"; side: Side }
@@ -181,7 +183,14 @@ export type JobEvent =
    * The browser needs the user's OK to open this half's port: after its first
    * Tandem firmware, or before an update when it can't see the half at all.
    */
-  | { type: "grant-port"; side: Side; before?: boolean; retry?: boolean }
+  | {
+      type: "grant-port";
+      side: Side;
+      before?: boolean;
+      retry?: boolean;
+      /** Left half only: its ZMK Studio port is already allowed, so Chrome marks that entry Paired. */
+      studioPaired?: boolean;
+    }
   | { type: "grant-port-done"; side: Side }
   /** The half is in update mode: the browser needs the user's OK to open its update port, once. */
   | { type: "update-port"; side: Side }

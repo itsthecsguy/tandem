@@ -14,7 +14,7 @@ This is a prototype.
 4. Choose where your layout lives:
    - **A repo you have**, such as your fork of Kinesis's config. Tandem adds itself with one commit and keeps your keys as they are.
    - **A new repo.** Tandem creates one on your account from its [config template](https://github.com/itsthecsguy/tandem-config), starting from Kinesis's default layout or the one on your keyboard. It can be private.
-5. Install Tandem firmware once. GitHub builds it, and for each half you press its key combo and allow its update port in Chrome's list. After that, an update is one click: the halves restart into update mode by themselves and Tandem sends the firmware over serial, with nothing to press or pick.
+5. Run the one-time setup. GitHub builds the firmware, then for each half, right half first, you press two keys, pick ADV360PRO in Chrome's list, and pick the half's new Tandem port in a second list. Tandem shows each step when it's time and names the entry to pick. After that, an update is one click: the halves restart into update mode by themselves and Tandem sends the firmware over serial, with nothing to press or pick.
 
 Safari and Firefox can't talk to the keyboard. They can still edit the layout and build firmware, and an update ends with both files to copy onto the halves by hand.
 
@@ -22,7 +22,7 @@ Safari and Firefox can't talk to the keyboard. They can still edit the layout an
 
 1. **Commit.** Saving commits the keymap to your branch through GitHub's API. If the branch changed on GitHub since Tandem loaded it, Tandem reloads instead of overwriting. Layers you didn't edit keep their spacing.
 2. **Build.** The push starts your workflow. Tandem follows the job for the firmware it wants (Clique or plain) and downloads its artifact. Downloads are kept in the browser, so going back to a build skips GitHub. If a commit's push started no build, as with a repo just made from the template, Tandem starts one.
-3. **Restart.** Right half first, then left. A half running Tandem firmware restarts into update mode when Tandem opens its serial port at 1200 baud. A half on other firmware needs its key combo, which Tandem shows on your layout. If a half can't be seen but the other one runs Tandem firmware, Tandem first asks you to allow its port, since that's one click and no keys.
+3. **Restart.** Right half first, then left. A half running Tandem firmware restarts into update mode when Tandem opens its serial port at 1200 baud. A half on other firmware needs its key combo, which Tandem shows on your layout. Both halves look the same in update mode, so when a combo lands on the other half, Tandem notices that half went quiet, updates it first, and asks for the first one again. That check needs the other half visible beforehand, which is why setup asks to connect the left half first. If a half can't be seen but the other one runs Tandem firmware, Tandem first asks you to allow its port, since that's one click and no keys.
 4. **Send.** In update mode, the half's bootloader opens a serial port of its own, listed as ADV360PRO. Tandem sends the firmware over it with the serial DFU protocol that Adafruit's nRF52 bootloader speaks, the same as `adafruit-nrfutil dfu serial`. Chrome asks once per half before a page may open that port, and remembers. If you'd rather not, or sending fails, the half's ADV360PRO drive works too: you choose it in the folder picker and Tandem copies the UF2 file.
 5. **Check.** Each half restarts and must report the new build. A half that just got Tandem firmware has a new serial port, so the browser asks you to allow it once.
 
@@ -82,7 +82,7 @@ npm --prefix helper run typecheck
 
 The tests run the browser engine against an in-memory GitHub and a simulated keyboard, so they cover updates end to end.
 
-In dev, `?demo=` with `setup`, `auto`, `drive`, `firsttime`, `port`, `byhand` or `done` shows the update screens, and `repo` or `install` shows onboarding screens. Demo mode never sends changes.
+In dev, `?demo=walkthrough` plays a first-time setup from stock firmware that you click through, with no keyboard or GitHub involved. Add `&wrong=half` to have the first key combo land on the other half, or `&wrong=port` to have the first port pick be the wrong one. `?demo=intro` shows the setup screen before it starts. `?demo=` with `setup`, `firsttime`, `sending`, `port`, `portleft`, `retry`, `switched`, `auto`, `updateport`, `drive`, `byhand` or `done` freezes the update sheet at one moment, and `repo` or `install` shows onboarding screens. Demo mode never sends changes. See `src/lib/demo.ts`.
 
 ## Deploy
 

@@ -1,8 +1,10 @@
-import { ArrowUpRight, Check, Circle, Download, HardDrive, Loader2, Minus, Plug, Usb, X } from "lucide-react";
+import { ArrowUpRight, Check, Circle, Download, HardDrive, Info, Loader2, Minus, Plug, Usb, X } from "lucide-react";
+import type { ReactNode } from "react";
 
 import type { JobAction, Keymap, LayoutKey, Side, StepState } from "../../shared/types";
-import { bootloaderCombo } from "../lib/guide";
-import { type JobView, STEP_ORDER, STEP_TITLES } from "../lib/job";
+import { api } from "../api";
+import { type Combo, bootloaderCombo } from "../lib/guide";
+import { type HandSteps, type JobView, type Mark, STEP_ORDER, STEP_TITLES } from "../lib/job";
 import { GitHubMark } from "./GitHubMark";
 import { Keyboard } from "./Keyboard";
 
@@ -21,11 +23,89 @@ function StepIcon({ state }: { state: StepState }) {
   }
 }
 
-function sideName(side: Side) {
-  return side === "left" ? "left" : "right";
+const HALF: Record<Side, string> = { left: "left half", right: "right half" };
+const Half: Record<Side, string> = { left: "Left half", right: "Right half" };
+
+/** How Chrome's port list names each half's Tandem port. */
+const PORT_NAME: Record<Side, string> = { left: "Adv360 Pro", right: "Adv360 Pro rt" };
+
+type Act = (a: JobAction) => void;
+
+/** The first-time setup's steps for both halves, so the user always knows how much is left. */
+function SetupChecklist({ hands, combos }: { hands: Record<Side, HandSteps>; combos: Record<Side, Combo | null> }) {
+  const browser = api.caps.engine === "browser";
+  const items = (side: Side): [keyof HandSteps, string][] => [
+    ["keys", combos[side] ? "Press 2 keys" : "Press reset twice"],
+    ...(browser
+      ? ([
+          ["allow", "Connect ADV360PRO"],
+          ["port", `Connect ${PORT_NAME[side]}`],
+        ] as [keyof HandSteps, string][])
+      : []),
+  ];
+  return (
+    <div className="checklist" aria-label="Your part of the setup">
+      {(["right", "left"] as Side[]).map((side) => (
+        <div key={side} className="checklist__half">
+          <span className="checklist__name">{Half[side]}</span>
+          <ol>
+            {items(side).map(([key, label]) => (
+              <li key={key} className={`is-${hands[side][key]}`}>
+                <MarkIcon mark={hands[side][key]} />
+                {label}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
+    </div>
+  );
 }
 
-function DriveButton({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
+function MarkIcon({ mark }: { mark: Mark }) {
+  if (mark === "done") return <Check size={14} aria-label="Done" />;
+  if (mark === "now") return <span className="checklist__now" aria-label="Now" />;
+  return <Circle size={14} aria-hidden />;
+}
+
+/** Chrome's port list, step by step. */
+function ChromeSteps({ button, entry, note }: { button: string; entry: ReactNode; note?: string }) {
+  return (
+    <>
+      <li>
+        Click <strong>{button}</strong> below.
+      </li>
+      <li>
+        In the list Chrome opens, {entry}, then click Connect.{note && ` ${note}`}
+      </li>
+    </>
+  );
+}
+
+/** What to pick for a half's Tandem port, given what Chrome shows next to it. */
+function portEntry(side: Side, studioPaired: boolean) {
+  if (side === "right") {
+    return (
+      <>
+        pick <strong>Adv360 Pro rt</strong>
+      </>
+    );
+  }
+  return studioPaired ? (
+    <>
+      pick the <strong>Adv360 Pro</strong> that isn't marked Paired
+    </>
+  ) : (
+    <>
+      pick either <strong>Adv360 Pro</strong>
+    </>
+  );
+}
+
+/** The left half shows two ports with the same name until one of them is allowed. */
+const twoPortsNote = "There are two. If you pick the wrong one, Tandem asks for the other.";
+
+function DriveButton({ side, onAct }: { side: Side; onAct: Act }) {
   return (
     <div className="drive-pick">
       <button type="button" className="btn btn--primary" onClick={() => onAct({ type: "pick-drive", side })}>
@@ -39,104 +119,187 @@ function DriveButton({ side, onAct }: { side: Side; onAct: (a: JobAction) => voi
   );
 }
 
-/** One click in Chrome's list, once per half. After that, updates need no clicks. */
-function UpdatePortButtons({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
+/** Connects the update port: one pick in Chrome's list, once per half. The drive is the way around it. */
+function UpdatePortButton({ side, onAct, emptyHint }: { side: Side; onAct: Act; emptyHint: boolean }) {
   return (
     <div className="drive-pick">
-      <div className="drive-pick--row drive-pick">
-        <button type="button" className="btn btn--primary" onClick={() => onAct({ type: "grant-update-port", side })}>
-          <Usb size={15} /> Allow ADV360PRO
-        </button>
-        <button type="button" className="btn btn--ghost" onClick={() => onAct({ type: "pick-drive", side })}>
-          <HardDrive size={15} /> Choose the drive instead
-        </button>
-      </div>
-      <p className="hint">
-        Chrome lists one entry, ADV360PRO. Select it and click Connect. Chrome remembers it, so later updates send the firmware with no
-        clicks at all.
-      </p>
+      <button type="button" className="btn btn--primary" onClick={() => onAct({ type: "grant-update-port", side })}>
+        <Usb size={15} /> Connect ADV360PRO
+      </button>
+      {emptyHint && (
+        <p className="hint">
+          If Chrome's list is empty, the half isn't in update mode yet. Close the list, press the keys again, and click Connect ADV360PRO.
+        </p>
+      )}
+      <button type="button" className="link hint" onClick={() => onAct({ type: "pick-drive", side })}>
+        Chrome won't connect? Copy the firmware to the drive instead
+      </button>
     </div>
   );
 }
 
-function UpdatePortPrompt({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
+function ComboBoard({ combo, keymap, layout }: { combo: Combo; keymap: Keymap; layout: LayoutKey[] }) {
+  return (
+    <div className="guide__board">
+      <Keyboard
+        layout={layout}
+        bindings={keymap.layers[0].bindings}
+        layerNames={keymap.layers.map((l) => l.name)}
+        highlight={[combo.hold, combo.press]}
+        labels={{ [combo.hold]: "1", [combo.press]: "2" }}
+        compact
+      />
+    </div>
+  );
+}
+
+function comboStep(side: Side, combo: Combo | null) {
+  return combo ? (
+    <>
+      Hold <strong>{combo.layerName}</strong> <span className="num">1</span> and tap <span className="num">2</span>, the two keys lit up
+      here. If that does nothing, press the {HALF[side]}'s reset button twice, quickly.
+    </>
+  ) : (
+    <>Press the {HALF[side]}'s reset button twice, quickly.</>
+  );
+}
+
+function ManualGuide({
+  side,
+  reason,
+  keymap,
+  layout,
+  onPickDrive,
+  onAllowPort,
+}: {
+  side: Side;
+  reason: "no-autoflash" | "no-response";
+  keymap: Keymap;
+  layout: LayoutKey[];
+  /** In the browser, the user points Tandem at the drive once it appears. */
+  onPickDrive?: Act;
+  /** In the browser, the user connects the half's update port once it appears. */
+  onAllowPort?: Act;
+}) {
+  const combo = bootloaderCombo(side, keymap, layout);
+
   return (
     <div className="guide">
       <div className="guide__head">
-        <span className="guide__badge">One-time step</span>
-        <h3>Allow the {sideName(side)} half's update port</h3>
-        <p>The {sideName(side)} half is in update mode. Tandem sends the firmware over its update port once the browser may open it.</p>
+        <span className="guide__badge">{Half[side]}</span>
+        <h3>Put the {HALF[side]} in update mode</h3>
+        {reason === "no-response" && <p>It didn't restart into update mode by itself, so do it by hand this once.</p>}
       </div>
-      <UpdatePortButtons side={side} onAct={onAct} />
+
+      <div className={`guide__body${combo ? "" : " guide__body--single"}`}>
+        {combo && <ComboBoard combo={combo} keymap={keymap} layout={layout} />}
+        <ol className="guide__steps">
+          <li>{comboStep(side, combo)}</li>
+          {onAllowPort ? (
+            <ChromeSteps
+              button="Connect ADV360PRO"
+              entry={
+                <>
+                  pick <strong>ADV360PRO</strong>
+                </>
+              }
+            />
+          ) : onPickDrive ? (
+            <li>A drive named ADV360PRO appears. Click Choose ADV360PRO below and select it.</li>
+          ) : (
+            <li>A drive named ADV360PRO appears, and Tandem copies the firmware to it.</li>
+          )}
+        </ol>
+      </div>
+      {onAllowPort ? (
+        <UpdatePortButton side={side} onAct={onAllowPort} emptyHint />
+      ) : onPickDrive ? (
+        <DriveButton side={side} onAct={onPickDrive} />
+      ) : (
+        <p className="guide__wait">
+          <Loader2 size={14} className="spin" /> Tandem continues as soon as the half shows up as a drive.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A half running Tandem firmware restarted into update mode, but this browser may not open its update port yet. */
+function UpdatePortPrompt({ side, onAct }: { side: Side; onAct: Act }) {
+  return (
+    <div className="guide">
+      <div className="guide__head">
+        <span className="guide__badge">{Half[side]} · once in this browser</span>
+        <h3>Connect the {HALF[side]}'s update port</h3>
+        <p>The {HALF[side]} restarted into update mode by itself. Chrome needs your OK once before Tandem can send it firmware.</p>
+      </div>
+      <ol className="guide__steps">
+        <ChromeSteps
+          button="Connect ADV360PRO"
+          entry={
+            <>
+              pick <strong>ADV360PRO</strong>
+            </>
+          }
+        />
+      </ol>
+      <UpdatePortButton side={side} onAct={onAct} emptyHint={false} />
     </div>
   );
 }
 
 /** The browser can't see the drive until the user points at it. */
-function DrivePrompt({ side, onAct }: { side: Side; onAct: (a: JobAction) => void }) {
+function DrivePrompt({ side, onAct }: { side: Side; onAct: Act }) {
   return (
     <div className="guide">
       <div className="guide__head">
-        <span className="guide__badge">Your turn</span>
-        <h3>Choose the {sideName(side)} half's drive</h3>
-        <p>The {sideName(side)} half is in update mode and shows up as a drive. Point Tandem at it, and it copies the firmware.</p>
+        <span className="guide__badge">{Half[side]}</span>
+        <h3>Choose the {HALF[side]}'s drive</h3>
+        <p>The {HALF[side]} is in update mode and shows up as a drive. Point Tandem at it, and it copies the firmware.</p>
       </div>
       <DriveButton side={side} onAct={onAct} />
     </div>
   );
 }
 
-/** The entry to pick in Chrome's port list for each half's Tandem port. */
-function portEntry(side: Side) {
-  return side === "right" ? (
-    <>
-      pick <strong>Adv360 Pro rt</strong>
-    </>
-  ) : (
-    <>
-      pick the <strong>Adv360 Pro</strong> entry that isn't marked Paired
-    </>
-  );
-}
-
-function GrantPortPrompt({ side, before, retry, onAct }: { side: Side; before: boolean; retry: boolean; onAct: (a: JobAction) => void }) {
+function GrantPortPrompt({ side, before, retry, studioPaired, onAct }: { side: Side; before: boolean; retry: boolean; studioPaired: boolean; onAct: Act }) {
+  const heading = retry
+    ? `Pick the other ${PORT_NAME[side]}`
+    : before
+      ? `Connect the ${HALF[side]}`
+      : `Connect the ${HALF[side]}'s Tandem port`;
+  const why = retry
+    ? `That wasn't the ${HALF[side]}'s Tandem port, so Chrome needs one more pick.`
+    : before
+      ? `This browser can't see the ${HALF[side]} yet. Connect it once, and Tandem restarts the half by itself, with no keys to press.`
+      : `The ${HALF[side]} now runs Tandem firmware. Connecting its port lets Tandem restart it for every update from now on, so you won't press keys again.`;
   return (
     <div className="guide">
       <div className="guide__head">
-        <span className="guide__badge">One-time step</span>
-        <h3>{retry ? `That wasn't the ${sideName(side)} half's Tandem port` : `Allow the ${sideName(side)} half's port`}</h3>
-        <p>
-          {retry
-            ? "Try the other entry."
-            : before
-              ? `This browser can't see the ${sideName(side)} half yet. If it runs Tandem firmware, allow its port and Tandem restarts it by itself, with no key combo.`
-              : `The ${sideName(side)} half now runs Tandem firmware, which adds a port this browser hasn't been allowed to open yet.`}{" "}
-          In Chrome's list, {portEntry(side)}. Chrome remembers it, so later updates won't ask.
-        </p>
+        <span className="guide__badge">{before ? `${Half[side]} · once in this browser` : `${Half[side]} · last step`}</span>
+        <h3>{heading}</h3>
+        <p>{why}</p>
       </div>
+      <ol className="guide__steps">
+        <ChromeSteps
+          button="Connect port"
+          entry={portEntry(side, studioPaired || retry)}
+          note={side === "left" && !studioPaired && !retry ? twoPortsNote : undefined}
+        />
+      </ol>
       <div className="drive-pick drive-pick--row">
         <button type="button" className="btn btn--primary" onClick={() => onAct({ type: "grant-port", side })}>
-          <Usb size={15} /> Allow port
+          <Usb size={15} /> Connect port
         </button>
         <button type="button" className="btn btn--ghost" onClick={() => onAct({ type: "grant-port", side, skip: true })}>
-          {before ? "Use the key combo instead" : "Skip the check"}
+          {before ? "Use the keys instead" : "Skip, and press keys next update"}
         </button>
       </div>
     </div>
   );
 }
 
-function ManualFlashGuide({
-  files,
-  keymap,
-  layout,
-  onAct,
-}: {
-  files: { left: string; right: string };
-  keymap: Keymap;
-  layout: LayoutKey[];
-  onAct: (a: JobAction) => void;
-}) {
+function ManualFlashGuide({ files, keymap, layout, onAct }: { files: { left: string; right: string }; keymap: Keymap; layout: LayoutKey[]; onAct: Act }) {
   const right = bootloaderCombo("right", keymap, layout);
   return (
     <div className="guide">
@@ -154,33 +317,13 @@ function ManualFlashGuide({
         </a>
       </div>
       <div className={`guide__body${right ? "" : " guide__body--single"}`}>
-        {right && (
-          <div className="guide__board">
-            <Keyboard
-              layout={layout}
-              bindings={keymap.layers[0].bindings}
-              layerNames={keymap.layers.map((l) => l.name)}
-              highlight={[right.hold, right.press]}
-              labels={{ [right.hold]: "1", [right.press]: "2" }}
-              compact
-            />
-          </div>
-        )}
+        {right && <ComboBoard combo={right} keymap={keymap} layout={layout} />}
         <ol className="guide__steps">
           <li>
-            Put the right half in update mode.{" "}
-            {right ? (
-              <>
-                Hold the <strong>{right.layerName}</strong> key <span className="num">1</span> and press <span className="num">2</span>, or
-                double-click its reset button.
-              </>
-            ) : (
-              "Double-click its reset button."
-            )}{" "}
-            A drive named ADV360PRO appears.
+            Put the right half in update mode. {comboStep("right", right)} A drive named ADV360PRO appears.
           </li>
           <li>Drag right.uf2 onto ADV360PRO. The half restarts when it's done.</li>
-          <li>Do the same with the left half and left.uf2. Double-click its reset button if you don't know its key combo.</li>
+          <li>Do the same with the left half and left.uf2. Press its reset button twice if you don't know its key combo.</li>
         </ol>
       </div>
       <div className="drive-pick">
@@ -192,93 +335,140 @@ function ManualFlashGuide({
   );
 }
 
-function ManualGuide({
-  side,
-  reason,
-  keymap,
-  layout,
-  onPickDrive,
-  onAllowPort,
-}: {
-  side: Side;
-  reason: "no-autoflash" | "no-response";
-  keymap: Keymap;
-  layout: LayoutKey[];
-  /** In the browser, the user points Tandem at the drive once it appears. */
-  onPickDrive?: (a: JobAction) => void;
-  /** In the browser, the user allows the half's update port once it appears. */
-  onAllowPort?: (a: JobAction) => void;
-}) {
-  const combo = bootloaderCombo(side, keymap, layout);
-
-  return (
-    <div className="guide">
-      <div className="guide__head">
-        <span className="guide__badge">One-time step</span>
-        <h3>Put the {sideName(side)} half in update mode</h3>
-        <p>
-          {reason === "no-autoflash"
-            ? "Its current firmware can't restart into update mode by itself yet. After this update it can, and you won't need to do this again."
-            : "It didn't restart into update mode by itself. Do it by hand this once."}
-        </p>
-      </div>
-
-      <div className={`guide__body${combo ? "" : " guide__body--single"}`}>
-        {combo && (
-          <div className="guide__board">
-            <Keyboard
-              layout={layout}
-              bindings={keymap.layers[0].bindings}
-              layerNames={keymap.layers.map((l) => l.name)}
-              highlight={[combo.hold, combo.press]}
-              labels={{ [combo.hold]: "1", [combo.press]: "2" }}
-              compact
-            />
-          </div>
-        )}
-
-        <ol className="guide__steps">
-          {combo ? (
-            <li>
-              Hold the <strong>{combo.layerName}</strong> key <span className="num">1</span>, then press{" "}
-              <span className="num">2</span> on the {sideName(side)} half.
-            </li>
-          ) : null}
-          <li>
-            {combo ? "Or double-click" : "Double-click"} the reset button on the {sideName(side)} half.
-          </li>
-          {onAllowPort && <li>A drive named ADV360PRO appears. Then allow its update port below.</li>}
-        </ol>
-      </div>
-      {onAllowPort ? (
-        <UpdatePortButtons side={side} onAct={onAllowPort} />
-      ) : onPickDrive ? (
-        <DriveButton side={side} onAct={onPickDrive} />
-      ) : (
-        <p className="guide__wait">
-          <Loader2 size={14} className="spin" /> Tandem continues as soon as the half shows up as a drive.
-        </p>
-      )}
-    </div>
-  );
+/** While nothing is asked of the user during setup: what Tandem is doing, and what not to touch. */
+function SetupWait({ view }: { view: JobView }) {
+  const flashing = (["right", "left"] as Side[]).find((s) => view.steps[`flash-${s}`].state === "active");
+  if (flashing) {
+    const detail = view.steps[`flash-${flashing}`].detail ?? "";
+    const text = detail.startsWith("Sending") || detail.startsWith("Copying")
+      ? `Sending firmware to the ${HALF[flashing]}. Keep it plugged in.`
+      : detail === "Restarting"
+        ? `The ${HALF[flashing]} is restarting with Tandem firmware.`
+        : null;
+    return text ? (
+      <p className="setup-wait">
+        <Loader2 size={14} className="spin" /> {text}
+      </p>
+    ) : null;
+  }
+  if (["save", "build", "download", "prepare"].some((s) => view.steps[s as keyof JobView["steps"]].state === "active")) {
+    return (
+      <p className="setup-wait">
+        <Loader2 size={14} className="spin" /> Nothing to do yet. GitHub is building your firmware, which takes about 3 minutes. Keep both halves
+        plugged in.
+      </p>
+    );
+  }
+  return null;
 }
 
 interface Props {
   view: JobView;
   keymap: Keymap;
   layout: LayoutKey[];
-  onAct: (a: JobAction) => void;
+  /** Neither half could restart by itself when this update started. */
+  firstTime?: boolean;
+  onAct: Act;
   onCancel: () => void;
   onClose: () => void;
   onRetry: () => void;
 }
 
-/** Progress of an update: the steps, and any guide or notice the user needs. */
-export function UpdateProgress({ view, keymap, layout, onAct }: { view: JobView; keymap: Keymap; layout: LayoutKey[]; onAct: (a: JobAction) => void }) {
+/** A first-time setup: some half needs the user's hands. */
+export function isSetup(view: JobView, firstTime = false) {
+  return (view.setup || firstTime) && !view.manualFlash;
+}
+
+/** Progress of an update: what the user needs to do now, then the steps. */
+export function UpdateProgress({
+  view,
+  keymap,
+  layout,
+  firstTime = false,
+  onAct,
+}: {
+  view: JobView;
+  keymap: Keymap;
+  layout: LayoutKey[];
+  firstTime?: boolean;
+  onAct: Act;
+}) {
   const driveWithCombo = view.drive && view.manual?.side === view.drive;
   const portWithCombo = view.updatePort && view.manual?.side === view.updatePort;
+  const setup = isSetup(view, firstTime);
+  const combos = { left: bootloaderCombo("left", keymap, layout), right: bootloaderCombo("right", keymap, layout) };
   return (
     <>
+      {setup && !view.done && <SetupChecklist hands={view.hands} combos={combos} />}
+
+      {view.switched && (
+        <div className="notice">
+          <Info size={16} />
+          <span>
+            That was the {HALF[view.switched.to]}, so Tandem is updating it now. The {HALF[view.switched.from]} comes next.
+          </span>
+        </div>
+      )}
+
+      {view.plugIn && (
+        <div className="notice">
+          <Plug size={16} />
+          <span>Connect the {HALF[view.plugIn]} with a USB cable.</span>
+        </div>
+      )}
+
+      {view.manual && (
+        <ManualGuide
+          side={view.manual.side}
+          reason={view.manual.reason}
+          keymap={keymap}
+          layout={layout}
+          onPickDrive={driveWithCombo ? onAct : undefined}
+          onAllowPort={portWithCombo ? onAct : undefined}
+        />
+      )}
+      {view.updatePort && !portWithCombo && <UpdatePortPrompt side={view.updatePort} onAct={onAct} />}
+      {view.drive && !driveWithCombo && <DrivePrompt side={view.drive} onAct={onAct} />}
+      {view.grantPort && <GrantPortPrompt {...view.grantPort} onAct={onAct} />}
+      {view.manualFlash && <ManualFlashGuide files={view.manualFlash} keymap={keymap} layout={layout} onAct={onAct} />}
+      {setup && view.running && !view.manual && !view.updatePort && !view.drive && !view.grantPort && <SetupWait view={view} />}
+
+      {view.done && (
+        <div className="notice notice--ok">
+          <Check size={16} />
+          <span>
+            {setup && view.checked && (
+              <>
+                <strong>You won't need to do this again.</strong> From now on, plug in both halves and click Update. Tandem does the rest,
+                with no keys to press.{" "}
+              </>
+            )}
+            {setup && !view.checked && (
+              <>
+                <strong>Tandem firmware is on both halves, but this browser can't reach one of them yet.</strong> The next update asks for
+                that half's port, or its keys, one more time.{" "}
+              </>
+            )}
+            {view.checked ? (
+              <>
+                Both halves are running build <code>{view.done}</code>.
+              </>
+            ) : (
+              <>
+                Build <code>{view.done}</code> is on both halves. This browser couldn't ask them to confirm it.
+              </>
+            )}
+          </span>
+        </div>
+      )}
+
+      {view.error && (
+        <div className="notice notice--err">
+          <X size={16} />
+          <span>{view.error}</span>
+        </div>
+      )}
+
       <ol className="steps">
         {STEP_ORDER.map((id) => {
           const step = view.steps[id];
@@ -299,69 +489,23 @@ export function UpdateProgress({ view, keymap, layout, onAct }: { view: JobView;
           <GitHubMark size={14} /> See the build on GitHub <ArrowUpRight size={13} />
         </a>
       )}
-
-      {view.plugIn && (
-        <div className="notice">
-          <Plug size={16} />
-          <span>Connect the {sideName(view.plugIn)} half with a USB cable.</span>
-        </div>
-      )}
-
-      {view.manual && (
-        <ManualGuide
-          side={view.manual.side}
-          reason={view.manual.reason}
-          keymap={keymap}
-          layout={layout}
-          onPickDrive={driveWithCombo ? onAct : undefined}
-          onAllowPort={portWithCombo ? onAct : undefined}
-        />
-      )}
-      {view.updatePort && !portWithCombo && <UpdatePortPrompt side={view.updatePort} onAct={onAct} />}
-      {view.drive && !driveWithCombo && <DrivePrompt side={view.drive} onAct={onAct} />}
-      {view.grantPort && <GrantPortPrompt side={view.grantPort.side} before={view.grantPort.before} retry={view.grantPort.retry} onAct={onAct} />}
-      {view.manualFlash && <ManualFlashGuide files={view.manualFlash} keymap={keymap} layout={layout} onAct={onAct} />}
-
-      {view.done && (
-        <div className="notice notice--ok">
-          <Check size={16} />
-          <span>
-            {view.checked ? (
-              <>
-                Both halves are running build <code>{view.done}</code>.
-              </>
-            ) : (
-              <>
-                Build <code>{view.done}</code> is on both halves. This browser couldn't ask them to confirm it.
-              </>
-            )}
-            {view.setup && " Automatic updates are set up. Next time, connect both halves and click Update."}
-          </span>
-        </div>
-      )}
-
-      {view.error && (
-        <div className="notice notice--err">
-          <X size={16} />
-          <span>{view.error}</span>
-        </div>
-      )}
     </>
   );
 }
 
-export function updateHeading(view: JobView): string {
-  if (view.done) return "Your keyboard is updated";
-  if (view.error) return "The update stopped";
-  return view.setup ? "Setting up automatic updates" : "Updating your keyboard";
+export function updateHeading(view: JobView, firstTime = false): string {
+  const setup = isSetup(view, firstTime);
+  if (view.done) return setup ? "Setup is done" : "Your keyboard is updated";
+  if (view.error) return setup ? "Setup stopped" : "The update stopped";
+  return setup ? "One-time setup" : "Updating your keyboard";
 }
 
-export function UpdateSheet({ view, keymap, layout, onAct, onCancel, onClose, onRetry }: Props) {
+export function UpdateSheet({ view, keymap, layout, firstTime, onAct, onCancel, onClose, onRetry }: Props) {
   return (
     <div className="scrim" role="presentation">
       <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
         <header className="sheet__head">
-          <h2 id="sheet-title">{updateHeading(view)}</h2>
+          <h2 id="sheet-title">{updateHeading(view, firstTime)}</h2>
           {!view.running && (
             <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
               <X size={18} />
@@ -369,7 +513,7 @@ export function UpdateSheet({ view, keymap, layout, onAct, onCancel, onClose, on
           )}
         </header>
 
-        <UpdateProgress view={view} keymap={keymap} layout={layout} onAct={onAct} />
+        <UpdateProgress view={view} keymap={keymap} layout={layout} firstTime={firstTime} onAct={onAct} />
 
         <footer className="sheet__foot">
           {view.running ? (
