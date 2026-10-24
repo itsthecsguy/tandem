@@ -23,7 +23,7 @@ function tandemRepo(): Record<string, string> {
   return files;
 }
 
-const TIMING = { savedDriveMs: 150, comebackMs: 600, newPortMs: 150, pollMs: 10, infoMs: 40 };
+const TIMING = { savedDriveMs: 150, comebackMs: 600, newPortMs: 150, pollMs: 10, infoMs: 40, mountMs: 20 };
 
 let github: FakeGitHub;
 let restore: () => void;

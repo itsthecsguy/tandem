@@ -42,7 +42,7 @@ export interface Deps {
   /** Whether trying the saved drive again is worth it in this browser. */
   driveReuse?: { load(): boolean; save(on: boolean): void };
   /** How long to try the last drive before asking, and to wait for a half to come back. */
-  timing?: { savedDriveMs: number; comebackMs: number; newPortMs: number; pollMs: number; infoMs: number };
+  timing?: { savedDriveMs: number; comebackMs: number; newPortMs: number; pollMs: number; infoMs: number; mountMs: number };
 }
 
 const UNLOCK_WAIT_MS = 120_000;
@@ -69,7 +69,7 @@ function browserDeps(): Deps | null {
 export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAccess {
   if (!deps) return noKeyboard();
   const { serial, pickDirectory } = deps;
-  const timing = deps.timing ?? { savedDriveMs: 8000, comebackMs: 25_000, newPortMs: 6000, pollMs: 500, infoMs: 700 };
+  const timing = deps.timing ?? { savedDriveMs: 8000, comebackMs: 25_000, newPortMs: 6000, pollMs: 500, infoMs: 700, mountMs: 2500 };
 
   // What each allowed port said about itself, and when. A port that didn't
   // answer is asked again later: it may be ZMK Studio's, which never will, or
@@ -180,6 +180,16 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     }
   }
 
+  /** A drive the user just chose may still be mounting. Give it a few seconds. */
+  async function becomesUpdateDrive(d: DriveLike, ms = 4000): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (await isUpdateDrive(d)) return true;
+      if (Date.now() > deadline) return false;
+      await sleep(Math.min(timing.pollMs, 400));
+    }
+  }
+
   async function pollSaved(signal: AbortSignal, ms = Infinity): Promise<DriveLike | null> {
     const deadline = Date.now() + ms;
     while (drive && Date.now() < deadline) {
@@ -200,6 +210,9 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     if (restarted && drive && reuseDrive) {
       const saved = await pollSaved(signal, timing.savedDriveMs);
       if (saved) return { drive: saved, picked: false };
+    } else if (restarted) {
+      // Give macOS a moment to mount the drive before offering to choose it.
+      await sleep(timing.mountMs, signal);
     }
     emit({ type: "drive", side });
     const done = new AbortController();
@@ -401,8 +414,13 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
           // A saved drive that's gone can make startIn fail. Ask without it.
           picked = await pickDirectory({ id: "adv360-drive", mode: "readwrite" });
         }
-        if (!(await isUpdateDrive(picked))) {
-          throw new Error(`"${picked.name}" isn't a keyboard half's update drive. Choose the drive named ADV360PRO.`);
+        // Only a drive with the right name is worth waiting for.
+        if (!(await isUpdateDrive(picked)) && (picked.name !== "ADV360PRO" || !(await becomesUpdateDrive(picked)))) {
+          throw new Error(
+            picked.name === "ADV360PRO"
+              ? "Tandem couldn't read ADV360PRO. The half may still be starting update mode. Wait until the drive shows up in Finder, then choose it again."
+              : `"${picked.name}" isn't a keyboard half's update drive. Choose the drive named ADV360PRO.`,
+          );
         }
         if (reuseDrive) {
           drive = picked;
