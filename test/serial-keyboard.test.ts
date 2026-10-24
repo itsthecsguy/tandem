@@ -30,6 +30,7 @@ const TIMING = {
   pollMs: 10,
   infoMs: 40,
   bootMs: 100,
+  settleMs: 0,
   dfu: { pageEraseMs: 0, pageWriteMs: 0, ackMs: 300, minEraseMs: 0 },
 };
 
@@ -44,13 +45,13 @@ beforeEach(() => {
 
 afterEach(() => restore());
 
-async function setup(kb: FakeKeyboard, pick?: () => DriveLike, savedDrive?: DriveLike) {
+async function setup(kb: FakeKeyboard, pick?: () => DriveLike, savedDrive?: DriveLike, timing: Partial<typeof TIMING> = {}) {
   vi.resetModules();
   const store = await import("../src/engine/store");
   store.saveToken({ token: "gho_test", scope: "public_repo workflow" });
   const { keyboardAccess } = await import("../src/engine/serial-keyboard");
   const { browserEngine } = await import("../src/engine/browser");
-  const access = keyboardAccess({ serial: kb, pickDirectory: kb.picker(pick), timing: TIMING, loadDrive: async () => savedDrive ?? null });
+  const access = keyboardAccess({ serial: kb, pickDirectory: kb.picker(pick), timing: { ...TIMING, ...timing }, loadDrive: async () => savedDrive ?? null });
   const engine = browserEngine(access);
   await engine.connect({ owner: "octocat", name: "adv360", branch: "main" });
   const events: JobEvent[] = [];
@@ -150,6 +151,27 @@ describe("Web Serial keyboard", () => {
     expect(order).toEqual(["flash-right", "flash-left"]);
   });
 
+  it("leaves a restarted half in update mode a moment before sending", async () => {
+    // Sending while macOS is still mounting the half's drive stalls the bootloader.
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowAll();
+    kb.allowUpdatePorts();
+    const { engine, events } = await setup(kb, undefined, undefined, { settleMs: 250 });
+    let entered = 0;
+    let sending = 0;
+    const enter = kb.right.enterUpdateMode.bind(kb.right);
+    kb.right.enterUpdateMode = () => {
+      entered = Date.now();
+      enter();
+    };
+    engine.subscribe((e) => {
+      if (!sending && e.type === "job-event" && e.event.type === "step" && e.event.step === "flash-right" && /^Sending firmware \d+%$/.test(e.event.detail ?? "")) sending = Date.now();
+    });
+    expect(await run(engine, events, kb)).toMatchObject({ type: "done", checked: true });
+    expect(entered).toBeGreaterThan(0);
+    expect(sending - entered).toBeGreaterThanOrEqual(240);
+  });
+
   it("asks once for each half's update port, then never again", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
     kb.allowAll();
@@ -183,6 +205,21 @@ describe("Web Serial keyboard", () => {
     expect(access.devices().left.autoflash && access.devices().right.autoflash).toBe(true);
   });
 
+  it("knows at once when the pick is a port that was already connected", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.allowAll();
+    // newPortMs is long here, so only an answer that doesn't wait for it finishes in time.
+    const { engine, access, events } = await setup(kb, undefined, undefined, { newPortMs: 3000 });
+    await until(() => access.devices().left.mode === "app");
+    kb.wrongPicks = 1;
+    const asked: number[] = [];
+    engine.subscribe((e) => e.type === "job-event" && e.event.type === "grant-port" && e.event.side === "right" && asked.push(Date.now()));
+    expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
+    expect(events).toContainEqual({ type: "grant-port", side: "right", retry: true, paired: true });
+    expect(asked).toHaveLength(2);
+    expect(asked[1] - asked[0]).toBeLessThan(1000);
+  });
+
   it("takes the other half's new port when that's the one picked", async () => {
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
     kb.allowAll();
@@ -204,7 +241,7 @@ describe("Web Serial keyboard", () => {
     await until(() => access.devices().left.mode === "app");
     kb.wrongPicks = 1;
     expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
-    expect(events).toContainEqual({ type: "grant-port", side: "right", retry: true });
+    expect(events).toContainEqual({ type: "grant-port", side: "right", retry: true, paired: true });
     expect(access.devices().left.autoflash && access.devices().right.autoflash).toBe(true);
   });
 

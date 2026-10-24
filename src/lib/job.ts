@@ -35,7 +35,7 @@ export interface JobView {
   /** The browser needs the user's OK, once, to open this half's update port. */
   updatePort: Side | null;
   /** The browser needs the user to allow this half's port, before or after flashing it. */
-  grantPort: { side: Side; before: boolean; retry: boolean; studioPaired: boolean } | null;
+  grantPort: { side: Side; before: boolean; retry: boolean; studioPaired: boolean; paired: boolean } | null;
   /** First-time setup's steps for each half. */
   hands: Record<Side, HandSteps>;
   /** The key combo landed on the other half, so Tandem updates that one first. */
@@ -128,7 +128,7 @@ export function viewJob(job: JobSnapshot): JobView {
         view.hands[e.side].allow = "done";
         break;
       case "grant-port":
-        view.grantPort = { side: e.side, before: !!e.before, retry: !!e.retry, studioPaired: !!e.studioPaired };
+        view.grantPort = { side: e.side, before: !!e.before, retry: !!e.retry, studioPaired: !!e.studioPaired, paired: !!e.paired };
         if (!e.before) view.hands[e.side].port = "now";
         break;
       case "grant-port-done":

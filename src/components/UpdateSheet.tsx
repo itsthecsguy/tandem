@@ -267,17 +267,39 @@ function DrivePrompt({ side, onAct }: { side: Side; onAct: Act }) {
   );
 }
 
-function GrantPortPrompt({ side, before, retry, studioPaired, onAct }: { side: Side; before: boolean; retry: boolean; studioPaired: boolean; onAct: Act }) {
+function GrantPortPrompt({
+  side,
+  before,
+  retry,
+  studioPaired,
+  paired,
+  onAct,
+}: {
+  side: Side;
+  before: boolean;
+  retry: boolean;
+  studioPaired: boolean;
+  paired: boolean;
+  onAct: Act;
+}) {
   const heading = retry
-    ? `Pick the other ${PORT_NAME[side]}`
+    ? side === "right"
+      ? "Pick Adv360 Pro rt"
+      : "Pick the other Adv360 Pro"
     : before
       ? `Connect the ${HALF[side]}`
       : `Connect the ${HALF[side]}'s new port`;
   const why = retry
-    ? `That wasn't the ${HALF[side]}'s new port, so Chrome needs one more pick.`
+    ? paired
+      ? side === "right"
+        ? "That entry is the left half, which is connected already."
+        : "That entry was connected already."
+      : side === "right"
+        ? "The right half didn't answer on that entry."
+        : "That was the left half's ZMK Studio port, which Tandem doesn't update through."
     : before
       ? `This browser can't see the ${HALF[side]} yet. Connect it once, and Tandem restarts the half by itself, with no keys to press.`
-      : `Both halves have Tandem firmware now, which gives each half a new port. Chrome needs your OK once for each, and then Tandem restarts the halves by itself for every update, with no keys to press.`;
+      : `ADV360PRO was the ${HALF[side]} in update mode. Running Tandem firmware, it shows up to Chrome as a different device, and Chrome asks once before Tandem may use it. After this, Tandem restarts the halves by itself for every update.`;
   return (
     <div className="guide">
       <div className="guide__head">
@@ -289,7 +311,7 @@ function GrantPortPrompt({ side, before, retry, studioPaired, onAct }: { side: S
         <ChromeSteps
           button="Connect port"
           entry={portEntry(side, studioPaired || retry)}
-          note={side === "left" && !studioPaired && !retry ? twoPortsNote : undefined}
+          note={side === "right" ? "The entries named Adv360 Pro are the left half." : !studioPaired && !retry ? twoPortsNote : undefined}
         />
       </ol>
       <div className="drive-pick drive-pick--row">

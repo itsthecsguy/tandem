@@ -190,6 +190,8 @@ export type JobEvent =
       retry?: boolean;
       /** Left half only: its ZMK Studio port is already allowed, so Chrome marks that entry Paired. */
       studioPaired?: boolean;
+      /** Asking again because the last pick was an entry that was connected already. */
+      paired?: boolean;
     }
   | { type: "grant-port-done"; side: Side }
   /** The half is in update mode: the browser needs the user's OK to open its update port, once. */

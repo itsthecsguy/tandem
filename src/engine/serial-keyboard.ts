@@ -57,10 +57,17 @@ interface Timing {
   infoMs: number;
   /** How long a restarted half's update port takes to show up. */
   bootMs: number;
+  /**
+   * How long to leave a half in update mode before sending. macOS mounts its
+   * ADV360PRO drive in about 2 seconds, and a transfer that starts sooner
+   * stalls the mount behind the flash erase until the bootloader stops
+   * answering.
+   */
+  settleMs: number;
   dfu: DfuTiming;
 }
 
-const TIMING: Timing = { savedDriveMs: 8000, comebackMs: 25_000, newPortMs: 6000, pollMs: 500, infoMs: 700, bootMs: 6000, dfu: DFU_TIMING };
+const TIMING: Timing = { savedDriveMs: 8000, comebackMs: 25_000, newPortMs: 6000, pollMs: 500, infoMs: 700, bootMs: 6000, settleMs: 3000, dfu: DFU_TIMING };
 
 const UNLOCK_WAIT_MS = 120_000;
 
@@ -263,13 +270,18 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     return seen;
   }
 
+  /** When each update port was first seen. A half that restarts brings a new one. */
+  const bootSeen = new WeakMap<PortLike, number>();
+
   /** Ports of halves in update mode that the browser may open. */
   async function bootPorts(): Promise<PortLike[]> {
     const ports = await serial.getPorts().catch(() => []);
-    return ports.filter((p) => {
+    const boot = ports.filter((p) => {
       const info = p.getInfo();
       return info.usbVendorId === BOOTLOADER.usbVendorId && info.usbProductId === BOOTLOADER.usbProductId;
     });
+    for (const p of boot) if (!bootSeen.has(p)) bootSeen.set(p, Date.now());
+    return boot;
   }
 
   /** Waits up to `ms` for an update port the browser may open. */
@@ -332,8 +344,10 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
   }
 
   /** Sends the firmware over the half's update port, reporting progress. */
-  async function sendOverSerial(port: PortLike, side: Side, uf2: Uint8Array, emit: Parameters<Flash>[1]) {
+  async function sendOverSerial(port: PortLike, side: Side, uf2: Uint8Array, emit: Parameters<Flash>[1], signal: AbortSignal) {
     const step = `flash-${side}` as const;
+    const wait = (bootSeen.get(port) ?? Date.now()) + timing.settleMs - Date.now();
+    if (wait > 0) await sleep(wait, signal);
     let shown = -1;
     await dfuFlash(
       port,
@@ -414,7 +428,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     if (method.kind === "serial") {
       emit({ type: "step", step, state: "active", detail: "Sending firmware" });
       try {
-        await sendOverSerial(method.port, target, build[target], emit);
+        await sendOverSerial(method.port, target, build[target], emit, signal);
       } catch (err) {
         // The half is still in update mode, so its drive works as a fallback.
         emit({ type: "step", step, state: "active", detail: `Sending over the update port failed (${(err as Error).message}). Copy it to the drive instead.` });
@@ -476,14 +490,15 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       pending = pending.filter((s) => !back.includes(s));
     };
     done(sides.filter((s) => !pending.includes(s)));
-    for (let misses = 0, missed = false; pending.length && misses < 3; ) {
+    for (let misses = 0, missed = false, paired = false; pending.length && misses < 3; ) {
       const side = pending[0];
       emit({ type: "step", step: "verify", state: "active", detail: `Waiting for the ${side} half's new port` });
-      emit({ type: "grant-port", side, retry: missed, ...(side === "left" && { studioPaired: otherPorts().length > 0 }) });
-      const granted = await waitFor<boolean>({ type: "grant-port", side }, signal);
+      emit({ type: "grant-port", side, retry: missed, ...(paired && { paired }), ...(side === "left" && { studioPaired: otherPorts().length > 0 }) });
+      const granted = await waitFor<boolean | "paired">({ type: "grant-port", side }, signal);
       emit({ type: "grant-port-done", side });
       if (!granted) break;
-      const back = await backAmong(pending, build.id, timing.newPortMs, signal);
+      paired = granted === "paired";
+      const back = paired ? [] : await backAmong(pending, build.id, timing.newPortMs, signal);
       missed = !back.length;
       if (missed) misses++;
       done(back);
@@ -626,8 +641,10 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
           return;
         }
         try {
-          await serial.requestPort({ filters: [{ usbVendorId: KINESIS_VID }] });
-          answer(action, true);
+          const before = new Set(await serial.getPorts());
+          const port = await serial.requestPort({ filters: [{ usbVendorId: KINESIS_VID }] });
+          // An entry Chrome marks Paired was connected already, so it can't be the new port.
+          answer(action, before.has(port) ? "paired" : true);
         } catch (e) {
           if (!isMissing(e)) throw e;
           // Closing Chrome's list without picking leaves the prompt up.
