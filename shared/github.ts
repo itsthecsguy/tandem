@@ -32,6 +32,10 @@ export class GitHubApi {
   async request(method: string, path: string, body?: unknown): Promise<Response> {
     const res = await fetch(path.startsWith("http") ? path : API + path, {
       method,
+      // GitHub marks answers fresh for 60 seconds, so a browser would serve a
+      // branch's head from before Tandem's own last commit. Asking again with
+      // the ETag costs a 304, which doesn't count against the rate limit.
+      cache: "no-cache",
       headers: {
         Authorization: `Bearer ${this.token}`,
         Accept: "application/vnd.github+json",

@@ -64,6 +64,10 @@ export class FakeGitHub {
   readonly repos = new Map<string, Repo>();
   readonly runs: Run[] = [];
   readonly requests: string[] = [];
+  /** The fetch cache mode of each request, in order. */
+  readonly cacheModes: string[] = [];
+  /** Answers for the next branch lookups, like a browser serving them from its cache. */
+  staleHeads: string[] = [];
   private blobs = new Map<string, Uint8Array>();
   private trees = new Map<string, Files>();
   private seq = 0;
@@ -150,6 +154,7 @@ export class FakeGitHub {
     const path = u.pathname;
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     this.requests.push(`${method} ${path}${u.search}`);
+    this.cacheModes.push(init?.cache ?? "default");
 
     if (path === "/user") return this.json({ login: this.login }, 200, { "x-oauth-scopes": this.scopes.join(", ") });
     if (path === "/user/repos") return this.json([...this.repos.values()].filter((r) => r.owner === this.login).map((r) => this.raw(r)));
@@ -164,6 +169,9 @@ export class FakeGitHub {
     if (rest === "/branches") return this.json([...repo.branches.keys()].map((b) => ({ name: b })));
 
     let r: RegExpExecArray | null;
+    if ((r = /^\/git\/ref\/heads\/(.+)$/.exec(rest)) && this.staleHeads.length) {
+      return this.json({ object: { sha: this.staleHeads.shift() } });
+    }
     if ((r = /^\/git\/ref\/heads\/(.+)$/.exec(rest))) {
       const sha = repo.branches.get(decodeURIComponent(r[1]));
       return sha ? this.json({ object: { sha } }) : this.notFound();

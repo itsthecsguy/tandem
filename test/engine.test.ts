@@ -138,6 +138,29 @@ describe("browser engine", () => {
     expect(fake.fileAt(head, "tandem/zmk-tandem/src/autoflash.c")).toBe(MODULE_FILES.find((f) => f.path.endsWith("autoflash.c"))!.content);
   });
 
+  it("finishes when an earlier click already added Tandem", async () => {
+    fake.addRepo("octocat", "kinesis-fork", kinesisRepo());
+    const e = await engine();
+    await e.connect({ owner: "octocat", name: "kinesis-fork", branch: "main" });
+    const before = fake.head("octocat", "kinesis-fork");
+    await e.install();
+    const after = fake.head("octocat", "kinesis-fork");
+    // A second click whose branch lookup comes back from before the first one's commit.
+    fake.staleHeads.push(before);
+    const { session } = await e.install();
+    expect(session.setup).toMatchObject({ installed: true, outdated: false });
+    expect(fake.head("octocat", "kinesis-fork")).toBe(after);
+  });
+
+  it("asks GitHub again rather than trusting the browser's cache", async () => {
+    fake.addRepo("octocat", "adv360", tandemRepo());
+    const e = await engine();
+    await e.connect({ owner: "octocat", name: "adv360", branch: "main" });
+    await e.state();
+    expect(fake.cacheModes.length).toBeGreaterThan(0);
+    expect(new Set(fake.cacheModes)).toEqual(new Set(["no-cache"]));
+  });
+
   it("updates with copying by hand, then reuses the download", async () => {
     fake.addRepo("octocat", "adv360", tandemRepo());
     const e = await engine();

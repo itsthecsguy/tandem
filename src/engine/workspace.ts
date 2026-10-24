@@ -2,7 +2,7 @@
 // GitHub is the source of truth: Tandem reads the few files it needs at the
 // branch's latest commit and commits each save back to it.
 
-import { GitHubApi } from "../../shared/github";
+import { GitHubApi, GitHubError } from "../../shared/github";
 import { parseKeymap, toKeymap, writeKeymap } from "../../shared/keymap";
 import { readLayout } from "../../shared/layout";
 import { KEYMAP_PATH, WORKFLOW_PATH, setupPlan } from "../../shared/setup";
@@ -153,21 +153,31 @@ export function disconnectRepo() {
 export async function installTandem(): Promise<string> {
   const gh = await github();
   const repo = connectedRepo();
-  const head = await gh.head(repo.owner, repo.name, repo.branch);
-  const { status, files } = setupPlan(await readRepoFiles(gh, repo, head), MODULE_FILES);
-  if (status.blocker) throw new Error(status.blocker);
-  if (!files.length) return head;
-  const sha = await gh.commit(
-    repo.owner,
-    repo.name,
-    repo.branch,
-    head,
-    files,
-    "Add Tandem automatic updates\n\nAdds the zmk-tandem firmware module, builds it in every firmware build, and\nmoves the keymap's repeat-on-tap-then-hold keys to Tandem's &ltr behavior.",
-  );
-  setupCache = null;
-  workspace = null;
-  return sha;
+  // If the branch moves while Tandem commits, plan again from its new head.
+  // That head may have the update already, say from another tab.
+  for (let attempt = 0; ; attempt++) {
+    const head = await gh.head(repo.owner, repo.name, repo.branch);
+    const { status, files } = setupPlan(await readRepoFiles(gh, repo, head), MODULE_FILES);
+    if (status.blocker) throw new Error(status.blocker);
+    setupCache = null;
+    workspace = null;
+    if (!files.length) return head;
+    try {
+      return await gh.commit(
+        repo.owner,
+        repo.name,
+        repo.branch,
+        head,
+        files,
+        "Add Tandem automatic updates\n\nAdds the zmk-tandem firmware module, builds it in every firmware build, and\nmoves the keymap's repeat-on-tap-then-hold keys to Tandem's &ltr behavior.",
+      );
+    } catch (err) {
+      if (attempt > 0 || !(err instanceof GitHubError && err.status === 422)) throw err;
+    } finally {
+      setupCache = null;
+      workspace = null;
+    }
+  }
 }
 
 // Workspace: the keymap and layout at the branch's latest commit.
