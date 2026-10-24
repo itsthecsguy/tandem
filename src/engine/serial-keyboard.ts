@@ -77,10 +77,16 @@ interface Timing {
    * answering.
    */
   settleMs: number;
+  /**
+   * How long the right half may take to go once the left half restarts it.
+   * The left half notices it gone after Bluetooth's supervision timeout,
+   * about 4 seconds on ZMK.
+   */
+  relayMs: number;
   dfu: DfuTiming;
 }
 
-const TIMING: Timing = { savedDriveMs: 8000, comebackMs: 25_000, newPortMs: 6000, pollMs: 500, infoMs: 700, bootMs: 6000, settleMs: 3000, dfu: DFU_TIMING };
+const TIMING: Timing = { savedDriveMs: 8000, comebackMs: 25_000, newPortMs: 6000, pollMs: 500, infoMs: 700, bootMs: 6000, settleMs: 3000, relayMs: 10_000, dfu: DFU_TIMING };
 
 const UNLOCK_WAIT_MS = 120_000;
 
@@ -161,6 +167,17 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     const deadline = Date.now() + ms;
     for (;;) {
       if ((await leftInfo())?.peripheral) return true;
+      if (Date.now() >= deadline) return false;
+      await sleep(timing.pollMs, signal);
+    }
+  }
+
+  /** Waits up to `ms` for the right half to go: its update port shows up, or the left half loses it. */
+  async function rightWent(ms: number, signal: AbortSignal): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if ((await bootPorts()).length) return true;
+      if ((await leftInfo())?.peripheral === false) return true;
       if (Date.now() >= deadline) return false;
       await sleep(timing.pollMs, signal);
     }
@@ -443,6 +460,9 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
         } finally {
           busy.delete(relay[0]);
         }
+        // The left half only queues the restart, so make sure the right half
+        // went before asking for anything.
+        viaLeft &&= await rightWent(timing.relayMs, signal);
       }
     }
     // The browser can't see a port nobody allowed. When the other half

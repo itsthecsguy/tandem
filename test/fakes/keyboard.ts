@@ -45,7 +45,7 @@ export class FakePort implements PortLike {
             const right = this.half.keyboard.right;
             const ok = right.linked && right.mode === "app";
             this.controller?.enqueue(enc(`{"tandem":3,"boot":"right","ok":${ok}}\n`));
-            if (ok) setTimeout(() => right.enterUpdateMode(), 20);
+            if (ok && !right.ignoresRelay) setTimeout(() => right.enterUpdateMode(), 20);
           }
           if (command === "keymap" && this.half.protocol >= 2) {
             const body = enc(this.half.keymap);
@@ -155,6 +155,8 @@ export class FakeHalf {
   protocol = 3;
   /** The right half's Bluetooth link to the left half. */
   linked = true;
+  /** The left half says it sent the restart, but the right half never gets it. */
+  ignoresRelay = false;
   mode: "app" | "update" = "app";
   keymap = "/ { keymap { compatible = \"zmk,keymap\"; }; };";
   restartsOnRequest = true;

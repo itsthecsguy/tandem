@@ -31,6 +31,7 @@ const TIMING = {
   infoMs: 40,
   bootMs: 100,
   settleMs: 0,
+  relayMs: 300,
   dfu: { pageEraseMs: 0, pageWriteMs: 0, ackMs: 300, minEraseMs: 0 },
 };
 
@@ -230,6 +231,21 @@ describe("Web Serial keyboard", () => {
     expect(events.some((e) => ["manual", "grant-port", "update-port", "drive"].includes(e.type))).toBe(false);
     expect(kb.right.flashedWith).toBe(`right-clique:${build}`);
     expect(access.devices().right).toMatchObject({ autoflash: true, build });
+  });
+
+  it("falls back to the right half's keys when the left half's restart doesn't reach it", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.allowAll();
+    kb.allowsSiblings = true;
+    kb.right.ignoresRelay = true;
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().left.mode === "app");
+    expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
+    expect(sides(events, "manual")).toEqual(["left", "right"]);
+    // No update port prompt while the right half was still running.
+    const relayed = events.findIndex((e) => e.type === "step" && e.detail === "Restarting into update mode through the left half");
+    const combo = events.findIndex((e) => e.type === "manual" && e.side === "right");
+    expect(events.slice(relayed, combo).some((e) => e.type === "update-port")).toBe(false);
   });
 
   it("asks for the right half's port when it isn't connected to the left half", async () => {
