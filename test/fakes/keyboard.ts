@@ -367,7 +367,14 @@ export class FakeKeyboard implements SerialLike {
     const matches = (p: PortLike) =>
       !options?.filters?.length ||
       options.filters.some((f) => (f.usbVendorId === undefined || f.usbVendorId === p.getInfo().usbVendorId) && (f.usbProductId === undefined || f.usbProductId === p.getInfo().usbProductId));
-    const present = [...this.left.ports(), ...this.right.ports()].filter(matches);
+    let present = [...this.left.ports(), ...this.right.ports()].filter(matches);
+    // Chrome keeps its list open and adds ports as they show up. For update
+    // ports, which only exist in update mode, wait a moment like a user would.
+    const bootloader = options?.filters?.some((f) => f.usbVendorId === 0x239a);
+    for (let waited = 0; bootloader && waited < 3000 && !present.some((p) => !this.isAllowed(p)); waited += 5) {
+      await new Promise((r) => setTimeout(r, 5));
+      present = [...this.left.ports(), ...this.right.ports()].filter(matches);
+    }
     if (this.wrongPicks > 0) {
       const paired = present.find((p) => this.isAllowed(p));
       if (paired) {

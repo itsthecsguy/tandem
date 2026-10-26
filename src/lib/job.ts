@@ -181,8 +181,8 @@ export function viewJob(job: JobSnapshot): JobView {
   return view;
 }
 
-/** The steps in the order this update takes them. */
-export function stepOrder(view: JobView): StepId[] {
-  if (view.firstHalf !== "left") return STEP_ORDER;
+/** The steps in the order this update takes them. Setup starts with the left half, so it can say so before it gets there. */
+export function stepOrder(view: JobView, leftFirst = false): StepId[] {
+  if ((view.firstHalf ?? (leftFirst ? "left" : "right")) !== "left") return STEP_ORDER;
   return STEP_ORDER.map((id) => (id === "flash-right" ? "flash-left" : id === "flash-left" ? "flash-right" : id));
 }

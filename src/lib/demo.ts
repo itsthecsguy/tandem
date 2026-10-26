@@ -261,6 +261,11 @@ export function demoEngine(real: Engine): Engine {
   const scenario = scenarios[name];
   let job: JobSnapshot | null = scenario ? { id: `demo-${name}`, ...scenario } : null;
 
+  // Chrome's list opened by the click that started the walkthrough. The demo
+  // picks ADV360PRO a few seconds in, as if the user had pressed the keys.
+  let earlyPick: Promise<boolean> | null = null;
+  let earlyPicked = false;
+
   // The walkthrough plays a job a step at a time, pausing where the user acts.
   let waiting: { action: JobAction["type"]; side: Side; resolve: (a: JobAction) => void } | null = null;
   let stopped = false;
@@ -293,6 +298,11 @@ export function demoEngine(real: Engine): Engine {
   /** A half by its key combo, the way serial-keyboard.ts runs it. Returns the half it updated. */
   async function byHand(side: Side, first: boolean): Promise<Side> {
     const step = `flash-${side}` as const;
+    if (first && earlyPicked && wrong !== "half") {
+      emit({ type: "step", step, state: "active", detail: "Already in update mode" });
+      await send(side, { type: "grant-update-port", side });
+      return side;
+    }
     emit({ type: "step", step, state: "active", detail: "Waiting for update mode" });
     emit({ type: "manual", side, reason: "no-autoflash" });
     emit({ type: "update-port", side });
@@ -330,6 +340,11 @@ export function demoEngine(real: Engine): Engine {
     for (const side of ["right", "left"] as Side[]) {
       emit({ type: "step", step: `flash-${side}`, state: "active", detail: side === "right" ? "Restarting into update mode through the left half" : "Restarting into update mode" });
       await sleep(1000);
+      // The first half shows up in the list the click opened.
+      if (side === "right" && earlyPick && (await earlyPick)) {
+        await send(side, { type: "grant-update-port", side });
+        continue;
+      }
       emit({ type: "update-port", side });
       const answer = await until("grant-update-port", side);
       emit({ type: "update-port-done", side });
@@ -344,7 +359,8 @@ export function demoEngine(real: Engine): Engine {
     emit({ type: "step", step: "save", state: "skipped", detail: `No changes, using ${BUILD}` });
     emit({ type: "step", step: "build", state: "active", detail: "Building on GitHub" });
     emit({ type: "run", url: "https://github.com/octocat/Adv360-Pro-ZMK/actions" });
-    await sleep(2500);
+    // Long enough to show the left half done from the open list while GitHub builds.
+    await sleep(earlyPick ? 7000 : 2500);
     emit({ type: "step", step: "build", state: "done", detail: `Built ${BUILD}` });
     emit({ type: "step", step: "download", state: "active", detail: "Downloading" });
     await sleep(600);
@@ -374,6 +390,15 @@ export function demoEngine(real: Engine): Engine {
     state: async () => state,
     saveKeymap: async (keymap) => ({ ...state, keymap }),
     connectKeyboard: async () => {},
+    allowUpdatePort: () => {
+      earlyPick = new Promise((resolve) =>
+        setTimeout(() => {
+          earlyPicked = true;
+          resolve(true);
+        }, trust ? 2500 : 4000),
+      );
+      return earlyPick;
+    },
     update: async () => {
       if (!walkthrough) throw new Error("This demo shows one moment of an update. Open ?demo=walkthrough to click through one.");
       stopped = false;

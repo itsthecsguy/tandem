@@ -123,6 +123,7 @@ export function browserEngine(keyboard: KeyboardAccess = noKeyboard()): Engine {
       return { ok: true };
     },
     connectKeyboard: () => keyboard.connect(),
+    allowUpdatePort: () => keyboard.allowUpdatePort(),
     act: (action) => keyboard.act(action),
     subscribe: (listener) => hub.subscribe(listener),
   };

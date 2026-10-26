@@ -46,6 +46,7 @@ export function helperEngine(): Engine {
     cancel: () => call("POST", "/api/update/cancel"),
     // The helper finds the halves over USB and copies firmware itself.
     connectKeyboard: async () => {},
+    allowUpdatePort: async () => false,
     act: async () => {},
     subscribe(listener: (e: LiveEvent) => void) {
       const source = new EventSource("/api/events");

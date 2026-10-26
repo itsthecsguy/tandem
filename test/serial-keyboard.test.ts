@@ -242,6 +242,56 @@ describe("Web Serial keyboard", () => {
     expect(access.devices().right).toMatchObject({ autoflash: true, build });
   });
 
+  it("takes the left half already in update mode, put there while GitHub built", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.allowAll();
+    kb.allowsSiblings = true;
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().left.mode === "app");
+    // The click that started setup opened Chrome's list. The user pressed the
+    // left half's keys, and picked ADV360PRO once it showed up.
+    const picked = access.allowUpdatePort();
+    kb.left.pressCombo();
+    expect(await picked).toBe(true);
+    const build = github.head("octocat", "adv360").slice(0, 7);
+    expect(await run(engine, events, kb, {}, false)).toEqual({ type: "done", build, checked: true });
+    // Only the right half's update port is left to pick, once the left half restarts it.
+    expect(events.some((e) => ["manual", "grant-port"].includes(e.type))).toBe(false);
+    expect(sides(events, "update-port")).toEqual(["right"]);
+    expect(events).toContainEqual({ type: "step", step: "flash-left", state: "active", detail: "Already in update mode" });
+    expect([kb.left.flashedWith, kb.right.flashedWith]).toEqual([`left-clique:${build}`, `right-clique:${build}`]);
+  });
+
+  it("tells when the half put in update mode early was the right half", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
+    kb.allowAll();
+    kb.allowsSiblings = true;
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().left.mode === "app");
+    const picked = access.allowUpdatePort();
+    kb.right.pressCombo();
+    expect(await picked).toBe(true);
+    const build = github.head("octocat", "adv360").slice(0, 7);
+    expect(await run(engine, events, kb, {}, false)).toEqual({ type: "done", build, checked: true });
+    // The left half's Studio port stayed up, so the right half went first. The left half then takes its keys.
+    expect(events).toContainEqual({ type: "step", step: "flash-right", state: "active", detail: "Already in update mode" });
+    expect(sides(events, "manual")).toEqual(["left"]);
+    expect([kb.left.flashedWith, kb.right.flashedWith]).toEqual([`left-clique:${build}`, `right-clique:${build}`]);
+  });
+
+  it("lets the click that trusts a browser open Chrome's list for the first update port", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234", studio: true }, right: { build: "old1234" } });
+    kb.allowed.add(kb.left.tandemPort!);
+    kb.allowsSiblings = true;
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().right.autoflash);
+    // Open before any half is in update mode. The right half shows up in it once the left half restarts it.
+    const picked = access.allowUpdatePort();
+    expect(await run(engine, events, kb)).toMatchObject({ type: "done", checked: true });
+    expect(await picked).toBe(true);
+    expect(sides(events, "update-port")).toEqual(["left"]);
+  });
+
   it("falls back to the right half's keys when the left half's restart doesn't reach it", async () => {
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
     kb.allowAll();
@@ -443,9 +493,19 @@ describe("Web Serial keyboard", () => {
     expect(events.some((e) => ["update-port", "drive", "manual"].includes(e.type))).toBe(false);
   });
 
-  it("won't guess which half is in update mode", async () => {
+  it("works out which half is in update mode from the one still in view", async () => {
     const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
     kb.allowAll();
+    kb.allowUpdatePorts();
+    const { engine, access, events } = await setup(kb);
+    await until(() => access.devices().left.mode === "app");
+    kb.right.enterUpdateMode();
+    expect(await run(engine, events, kb, {}, false)).toMatchObject({ type: "done", checked: true });
+    expect(events).toContainEqual({ type: "step", step: "flash-right", state: "active", detail: "Already in update mode" });
+  });
+
+  it("won't guess which half is in update mode when it never saw either", async () => {
+    const kb = new FakeKeyboard({ left: { build: null, studio: true }, right: { build: null } });
     kb.allowUpdatePorts();
     const { engine, events } = await setup(kb);
     kb.right.enterUpdateMode();

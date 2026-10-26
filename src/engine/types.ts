@@ -56,6 +56,8 @@ export interface Engine {
   cancel(): Promise<{ ok: true }>;
   /** Asks the browser for access to the keyboard's ports. Call it from a click. */
   connectKeyboard(): Promise<void>;
+  /** Opens Chrome's list for a half's update port ahead of time. Call it from a click. Says whether the user picked one. */
+  allowUpdatePort(): Promise<boolean>;
   /** Answers something a running update asked for. Call it from a click. */
   act(action: JobAction): Promise<void>;
   subscribe(listener: (e: LiveEvent) => void): () => void;

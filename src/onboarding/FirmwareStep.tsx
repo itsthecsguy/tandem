@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { AppState, DevicesStatus, Session } from "../../shared/types";
 import { api, useLive } from "../api";
-import { UpdateProgress, isSetup, updateHeading } from "../components/UpdateSheet";
+import { type EarlyList, UpdateProgress, isSetup, updateHeading } from "../components/UpdateSheet";
 import { viewJob } from "../lib/job";
 
 export function FirmwareStep({ onSession }: { onSession: (s: Session) => void }) {
@@ -14,6 +14,8 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
   const [firstTime, setFirstTime] = useState(false);
   /** The update started to get Chrome to trust the halves' update ports in this browser. */
   const [trusting, setTrusting] = useState(false);
+  /** Chrome's list for the first update port, opened by the click that started the update. */
+  const [early, setEarly] = useState<EarlyList | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,8 +38,22 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
   const start = async () => {
     setError(null);
     setStarted(true);
-    setFirstTime(!(devices?.left.autoflash && devices?.right.autoflash));
-    setTrusting(!!devices && devices.left.autoflash && devices.right.autoflash && !trustedHere(devices));
+    const first = !(devices?.left.autoflash && devices?.right.autoflash);
+    const trust = !!devices && devices.left.autoflash && devices.right.autoflash && !trustedHere(devices);
+    setFirstTime(first);
+    setTrusting(trust);
+    // Chrome opens its device list only from a click, and adds ADV360PRO to it
+    // once a half is in update mode. Opening it now spares the click that
+    // would open it later, and in setup lets the user do the left half while
+    // GitHub builds. Setup starts with the left half, an update with the right.
+    if (api.caps.engine === "browser" && api.caps.flash && (first || trust)) {
+      const side = first ? "left" : "right";
+      setEarly({ side, state: "open" });
+      api.allowUpdatePort().then(
+        (picked) => setEarly({ side, state: picked ? "picked" : "closed" }),
+        () => setEarly({ side, state: "closed" }),
+      );
+    }
     try {
       await api.update();
     } catch (e) {
@@ -84,6 +100,7 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
             keymap={state.keymap}
             layout={state.layout}
             firstTime={firstTime}
+            early={early}
             onAct={(a) => api.act(a).catch((e: Error) => setError(e.message))}
           />
         </div>
@@ -135,7 +152,7 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
           </li>
           <li>
             <span>
-              <strong>You connect ADV360PRO in Chrome, once for each half.</strong>
+              <strong>You connect ADV360PRO in Chrome, once for each half.</strong> The first list opens with your click.
             </span>
           </li>
           <li>
@@ -239,18 +256,21 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
       <h2 className="ob__subhead">What you'll do</h2>
       {browser ? (
         <>
-          <p className="ob__para">First GitHub builds your firmware, which takes about 3 minutes. Then:</p>
+          <p className="ob__para">
+            Start setup opens Chrome's list right away, so you can do the left half while GitHub builds your firmware, which takes about 3
+            minutes.
+          </p>
           <ol className="ob__plan">
             <li>
               <span>
-                <strong>Left half: press two keys, then connect ADV360PRO in Chrome.</strong> Tandem lights the keys up on a picture of your
-                layout, and Chrome's list has one entry. The firmware goes on as soon as you connect.
+                <strong>Left half: press two keys, then pick ADV360PRO in Chrome's list and click Connect.</strong> Tandem lights the keys up
+                on a picture of your layout. ADV360PRO shows up in the list once the half is in update mode.
               </span>
             </li>
             <li>
               <span>
-                <strong>Right half: connect ADV360PRO in Chrome.</strong> No keys this time. The left half's new firmware restarts the
-                right half for you.
+                <strong>Right half: connect ADV360PRO in Chrome when Tandem asks.</strong> No keys this time. The left half's new firmware
+                restarts the right half for you.
               </span>
             </li>
           </ol>

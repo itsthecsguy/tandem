@@ -164,6 +164,15 @@ function comboStep(side: Side, combo: Combo | null) {
   );
 }
 
+/** The update port's step when the click that started this already opened Chrome's list. */
+function OpenListStep() {
+  return (
+    <li>
+      Chrome's list is already open. Once <strong>ADV360PRO</strong> shows up in it, pick it and click Connect.
+    </li>
+  );
+}
+
 function ManualGuide({
   side,
   reason,
@@ -171,6 +180,8 @@ function ManualGuide({
   layout,
   onPickDrive,
   onAllowPort,
+  listOpen = false,
+  early = false,
 }: {
   side: Side;
   reason: "no-autoflash" | "no-response";
@@ -180,6 +191,10 @@ function ManualGuide({
   onPickDrive?: Act;
   /** In the browser, the user connects the half's update port once it appears. */
   onAllowPort?: Act;
+  /** Chrome's list for the update port is open already. */
+  listOpen?: boolean;
+  /** Shown while GitHub builds, before Tandem asks for anything. */
+  early?: boolean;
 }) {
   const combo = bootloaderCombo(side, keymap, layout);
 
@@ -187,7 +202,8 @@ function ManualGuide({
     <div className="guide">
       <div className="guide__head">
         <span className="guide__badge">{Half[side]}</span>
-        <h3>Put the {HALF[side]} in update mode</h3>
+        <h3>Put the {HALF[side]} in update mode{early ? " now" : ""}</h3>
+        {early && <p>GitHub is still building your firmware. Do this meanwhile, and Tandem sends it to the {HALF[side]} once it's ready.</p>}
         {reason === "no-response" && <p>It didn't restart into update mode by itself, so do it by hand this once.</p>}
       </div>
 
@@ -195,7 +211,9 @@ function ManualGuide({
         {combo && <ComboBoard combo={combo} keymap={keymap} layout={layout} />}
         <ol className="guide__steps">
           <li>{comboStep(side, combo)}</li>
-          {onAllowPort ? (
+          {listOpen ? (
+            <OpenListStep />
+          ) : onAllowPort ? (
             <ChromeSteps
               button="Connect ADV360PRO"
               entry={
@@ -211,7 +229,7 @@ function ManualGuide({
           )}
         </ol>
       </div>
-      {onAllowPort ? (
+      {listOpen ? null : onAllowPort ? (
         <UpdatePortButton side={side} onAct={onAllowPort} emptyHint />
       ) : onPickDrive ? (
         <DriveButton side={side} onAct={onPickDrive} />
@@ -225,7 +243,7 @@ function ManualGuide({
 }
 
 /** A half running Tandem firmware restarted into update mode, but this browser may not open its update port yet. */
-function UpdatePortPrompt({ side, onAct }: { side: Side; onAct: Act }) {
+function UpdatePortPrompt({ side, onAct, listOpen = false }: { side: Side; onAct: Act; listOpen?: boolean }) {
   return (
     <div className="guide">
       <div className="guide__head">
@@ -234,16 +252,20 @@ function UpdatePortPrompt({ side, onAct }: { side: Side; onAct: Act }) {
         <p>The {HALF[side]} restarted into update mode by itself. Chrome needs your OK once before Tandem can send it firmware.</p>
       </div>
       <ol className="guide__steps">
-        <ChromeSteps
-          button="Connect ADV360PRO"
-          entry={
-            <>
-              pick <strong>ADV360PRO</strong>
-            </>
-          }
-        />
+        {listOpen ? (
+          <OpenListStep />
+        ) : (
+          <ChromeSteps
+            button="Connect ADV360PRO"
+            entry={
+              <>
+                pick <strong>ADV360PRO</strong>
+              </>
+            }
+          />
+        )}
       </ol>
-      <UpdatePortButton side={side} onAct={onAct} emptyHint={false} />
+      {!listOpen && <UpdatePortButton side={side} onAct={onAct} emptyHint={false} />}
     </div>
   );
 }
@@ -358,7 +380,7 @@ function ManualFlashGuide({ files, keymap, layout, onAct }: { files: { left: str
 }
 
 /** While nothing is asked of the user during setup: what Tandem is doing, and what not to touch. */
-function SetupWait({ view }: { view: JobView }) {
+function SetupWait({ view, readySide }: { view: JobView; readySide: Side | null }) {
   const flashing = (["right", "left"] as Side[]).find((s) => view.steps[`flash-${s}`].state === "active");
   if (flashing) {
     const detail = view.steps[`flash-${flashing}`].detail ?? "";
@@ -376,6 +398,13 @@ function SetupWait({ view }: { view: JobView }) {
         <Loader2 size={14} className="spin" /> {text}
       </p>
     ) : null;
+  }
+  if (readySide && ["save", "build", "download", "prepare"].some((s) => view.steps[s as keyof JobView["steps"]].state === "active")) {
+    return (
+      <p className="setup-wait">
+        <Check size={14} /> The {HALF[readySide]} is in update mode. Tandem sends it the firmware as soon as GitHub finishes building.
+      </p>
+    );
   }
   if (["save", "build", "download", "prepare"].some((s) => view.steps[s as keyof JobView["steps"]].state === "active")) {
     return (
@@ -405,27 +434,48 @@ export function isSetup(view: JobView, firstTime = false) {
   return (view.setup || firstTime) && !view.manualFlash;
 }
 
+/**
+ * Chrome's list for an update port, opened by the click that started the
+ * update, and the half the user was asked to put in update mode meanwhile.
+ */
+export interface EarlyList {
+  side: Side;
+  state: "open" | "picked" | "closed";
+}
+
 /** Progress of an update: what the user needs to do now, then the steps. */
 export function UpdateProgress({
   view,
   keymap,
   layout,
   firstTime = false,
+  early = null,
   onAct,
 }: {
   view: JobView;
   keymap: Keymap;
   layout: LayoutKey[];
   firstTime?: boolean;
+  early?: EarlyList | null;
   onAct: Act;
 }) {
   const driveWithCombo = view.drive && view.manual?.side === view.drive;
   const portWithCombo = view.updatePort && view.manual?.side === view.updatePort;
   const setup = isSetup(view, firstTime);
   const combos = { left: bootloaderCombo("left", keymap, layout), right: bootloaderCombo("right", keymap, layout) };
+  const listOpen = early?.state === "open";
+  // Before Tandem flashes anything, the user can do the first half from the open list.
+  const beforeFlashing = view.running && (["left", "right"] as Side[]).every((s) => view.steps[`flash-${s}`].state === "pending");
+  const earlyGuide = setup && listOpen && beforeFlashing && !view.manual ? early!.side : null;
+  const readySide = setup && early?.state === "picked" && beforeFlashing ? early.side : null;
+  const hands =
+    readySide && view.hands[readySide].keys !== "now"
+      ? { ...view.hands, [readySide]: { ...view.hands[readySide], keys: "done", keysBy: "you", allow: "done" } }
+      : view.hands;
   return (
     <>
-      {setup && !view.done && <SetupChecklist hands={view.hands} combos={combos} />}
+      {setup && !view.done && <SetupChecklist hands={hands} combos={combos} />}
+      {earlyGuide && <ManualGuide side={earlyGuide} reason="no-autoflash" keymap={keymap} layout={layout} listOpen early />}
 
       {view.switched && (
         <div className="notice">
@@ -451,13 +501,16 @@ export function UpdateProgress({
           layout={layout}
           onPickDrive={driveWithCombo ? onAct : undefined}
           onAllowPort={portWithCombo ? onAct : undefined}
+          listOpen={listOpen && !!portWithCombo}
         />
       )}
-      {view.updatePort && !portWithCombo && <UpdatePortPrompt side={view.updatePort} onAct={onAct} />}
+      {view.updatePort && !portWithCombo && <UpdatePortPrompt side={view.updatePort} onAct={onAct} listOpen={listOpen} />}
       {view.drive && !driveWithCombo && <DrivePrompt side={view.drive} onAct={onAct} />}
       {view.grantPort && <GrantPortPrompt {...view.grantPort} onAct={onAct} />}
       {view.manualFlash && <ManualFlashGuide files={view.manualFlash} keymap={keymap} layout={layout} onAct={onAct} />}
-      {setup && view.running && !view.manual && !view.updatePort && !view.drive && !view.grantPort && <SetupWait view={view} />}
+      {setup && view.running && !earlyGuide && !view.manual && !view.updatePort && !view.drive && !view.grantPort && (
+        <SetupWait view={view} readySide={readySide} />
+      )}
 
       {view.done && (
         <div className="notice notice--ok">
@@ -496,7 +549,7 @@ export function UpdateProgress({
       )}
 
       <ol className="steps">
-        {stepOrder(view).map((id) => {
+        {stepOrder(view, setup && api.caps.engine === "browser").map((id) => {
           const step = view.steps[id];
           return (
             <li key={id} className={`step step--${step.state}`}>

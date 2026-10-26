@@ -126,6 +126,8 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
   const watchers = new Set<(d: DevicesStatus) => void>();
   let rightBuild = deps.rightBuild?.load() ?? null;
   const trusted = new Set<Side>(deps.updatePorts?.load() ?? []);
+  /** Halves the browser has seen a port of, Tandem's or ZMK Studio's, since the page loaded. */
+  const seen = new Set<Side>();
   let devices = compute();
   let last = JSON.stringify(devices);
   let drive: DriveLike | null = null;
@@ -210,6 +212,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     };
     const left = half("left");
     const right = half("right");
+    for (const side of SIDES) if (visible(side)) seen.add(side);
     return {
       left,
       right,
@@ -569,7 +572,8 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     // hasn't been allowed to open. The caller asks for it once every half is
     // flashed. Chrome may allow it already when it allowed another port of
     // the same half, so give a half it could see before a moment to show up.
-    const targetWasUp = target === side ? thisWasUp : otherWasUp;
+    // A half that was already in update mode when this started may have been in view before that.
+    const targetWasUp = (target === side ? thisWasUp : otherWasUp) || seen.has(target);
     const back = await comeback(target, build.id, found ? timing.comebackMs : targetWasUp ? timing.newPortMs : 0, signal);
     if (back && back.build !== build.id) throw new Error(`The ${target} half is running build ${back.build}, expected ${build.id}.`);
     const newPort = !back && !found;
@@ -663,11 +667,17 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     const [bootPort] = await bootPorts();
     const savedDrive = !bootPort && drive && reuseDrive && (await isUpdateDrive(drive)) ? drive : null;
     if (bootPort || savedDrive) {
+      // The user can put a half in update mode early, from Chrome's list opened
+      // by the click that started this, while GitHub built. A half the
+      // browser saw earlier that's gone now is the one. Failing that, with the
+      // left half still in view, it's the right half.
       const silent = SIDES.filter((s) => !d[s].autoflash);
-      if (silent.length !== 1) {
+      const gone = SIDES.filter((s) => seen.has(s) && !visible(s));
+      const side = silent.length === 1 ? silent[0] : gone.length === 1 ? gone[0] : visible("left") && !visible("right") ? "right" : null;
+      if (!side) {
         throw new Error("One half is already in update mode, and Tandem can't tell which. Press that half's reset button once so it restarts, then update again.");
       }
-      waiting = { side: silent[0], method: bootPort ? { kind: "serial", port: bootPort } : { kind: "drive", found: { drive: savedDrive!, picked: false } } };
+      waiting = { side, method: bootPort ? { kind: "serial", port: bootPort } : { kind: "drive", found: { drive: savedDrive!, picked: false } } };
     }
 
     // A key combo can land on the other half, which then gets updated first,
@@ -737,6 +747,16 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       if (!others.length) throw new Error("Connect the left half and allow its port first.");
       const imported = await withStudioPorts(others, async () => (await studio()).readStudioLayout(others, UNLOCK_WAIT_MS));
       return { layout: { source: "studio", ...imported, layout: KINESIS_LAYOUT.keys } };
+    },
+    allowUpdatePort() {
+      // No await before requestPort, so it runs within the click.
+      return serial.requestPort({ filters: [BOOTLOADER] }).then(
+        () => true,
+        (e) => {
+          if (isMissing(e)) return false;
+          throw e;
+        },
+      );
     },
     async connect() {
       try {

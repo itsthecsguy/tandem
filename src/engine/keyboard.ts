@@ -19,6 +19,13 @@ export interface KeyboardAccess {
   readLayout(): Promise<{ layout: ImportedLayout; keymapText?: string }>;
   /** Asks for access to a port. Must run inside a click. */
   connect(): Promise<void>;
+  /**
+   * Opens Chrome's list for a half's update port before any half is in update
+   * mode, so the click that starts an update can open it: Chrome only opens
+   * the list from a click, and adds ADV360PRO to it once a half gets there.
+   * Must run inside a click. Says whether the user picked one.
+   */
+  allowUpdatePort(): Promise<boolean>;
   flash: Flash;
   /** Answers something a running update asked for. Must run inside a click. */
   act(action: JobAction): Promise<void>;
@@ -47,6 +54,7 @@ export function noKeyboard(): KeyboardAccess {
     connect: async () => {
       throw new Error("This browser can't talk to the keyboard. Open Tandem in Chrome or Edge.");
     },
+    allowUpdatePort: async () => false,
     flash: manualFlash,
     act: async (action) => {
       answer(action);
