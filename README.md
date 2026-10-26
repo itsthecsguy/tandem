@@ -97,7 +97,7 @@ The site is the `dist/` build served by the Worker in `worker/`, on Cloudflare's
 3. Run `npx wrangler secret put GITHUB_CLIENT_SECRET` and paste the app's client secret.
 4. Run `npx wrangler login` once, then `npm run build && npx wrangler deploy`. `wrangler.toml` makes `tandemkb.com` the Worker's custom domain, so Cloudflare sets up its DNS record and certificate.
 
-The Worker only trades codes for its own origin and callback URL, and keeps no tokens. It serves the site with a content security policy that allows scripts from the site alone, HSTS, and a cross-origin opener policy, and blocks framing.
+The Worker only runs for `/api/*`: it trades codes for its own origin and callback URL, and keeps no tokens. Cloudflare serves the pages and files straight from `dist/`, which is free and unlimited on its free plan, with the headers in `public/_headers`: a content security policy that allows scripts from the site alone and blocks framing, HSTS, and a cross-origin opener policy. On the free plan, the Worker's share is 100,000 requests a day, and only sign-ins count toward it.
 
 To update the config template, edit `template/` and run `scripts/publish-template.sh`, which commits it to [itsthecsguy/tandem-config](https://github.com/itsthecsguy/tandem-config).
 

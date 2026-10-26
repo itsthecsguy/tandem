@@ -1,8 +1,9 @@
-// The site's only server code, as a Cloudflare Worker. It serves the built
-// site with security headers, and finishes GitHub sign-in: GitHub's token
-// endpoint needs the OAuth app's secret and refuses requests from browsers,
-// so the page sends the code here, and later the refresh token when the
-// access token is about to expire. The Worker keeps nothing.
+// The site's only server code, as a Cloudflare Worker. It finishes GitHub
+// sign-in: GitHub's token endpoint needs the OAuth app's secret and refuses
+// requests from browsers, so the page sends the code here, and later the
+// refresh token when the access token is about to expire. The Worker keeps
+// nothing. Cloudflare serves the pages themselves straight from the built
+// assets, with the headers in public/_headers, and only runs this for /api/*.
 
 export interface Env {
   ASSETS: { fetch(request: Request): Promise<Response> };
@@ -11,18 +12,6 @@ export interface Env {
   /** Set with `wrangler secret put GITHUB_CLIENT_SECRET`. */
   GITHUB_CLIENT_SECRET?: string;
 }
-
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: https://avatars.githubusercontent.com",
-  // Firmware downloads redirect from GitHub's API to its artifact storage.
-  "connect-src 'self' https://api.github.com https://*.blob.core.windows.net https://*.actions.githubusercontent.com",
-  "frame-ancestors 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-].join("; ");
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -99,18 +88,7 @@ export default {
     if (pathname === "/api/auth/token") return exchange(request, env);
     if (pathname === "/api/auth/refresh") return refresh(request, env);
     if (pathname.startsWith("/api/")) return json({ error: "Not found" }, 404);
-
-    const res = await env.ASSETS.fetch(request);
-    const headers = new Headers(res.headers);
-    headers.set("content-security-policy", CSP);
-    headers.set("x-content-type-options", "nosniff");
-    // The sign-in callback's URL holds a code. Never send it anywhere.
-    headers.set("referrer-policy", "no-referrer");
-    headers.set("permissions-policy", "serial=(self)");
-    // Browsers only keep this from HTTPS answers, so it's harmless in local dev.
-    headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
-    // Sign-in is a full-page redirect, so no other window needs a handle on this one.
-    headers.set("cross-origin-opener-policy", "same-origin");
-    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+    // Only /api/* reaches the Worker. Anything else is the assets' to answer.
+    return env.ASSETS.fetch(request);
   },
 };

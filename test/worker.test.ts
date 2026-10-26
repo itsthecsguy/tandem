@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "../worker/index";
@@ -88,15 +90,18 @@ describe("worker", () => {
     expect((await worker.fetch(refresh({}), env())).status).toBe(400);
   });
 
-  it("serves the site with security headers", async () => {
+  it("leaves the pages to the assets, whose headers lock the site down", async () => {
     const res = await worker.fetch(new Request(`${SITE}/auth/callback?code=abc`), env());
     expect(await res.text()).toBe("<!doctype html>");
-    expect(res.headers.get("content-security-policy")).toContain("script-src 'self'");
-    expect(res.headers.get("content-security-policy")).toContain("https://api.github.com");
-    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
-    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("strict-transport-security")).toContain("max-age=");
-    expect(res.headers.get("cross-origin-opener-policy")).toBe("same-origin");
+    const headers = readFileSync(join(__dirname, "..", "public/_headers"), "utf8");
+    expect(headers).toMatch(/^\/\*$/m);
+    expect(headers).toMatch(/Content-Security-Policy: .*script-src 'self';/);
+    expect(headers).toMatch(/connect-src [^;]*https:\/\/api\.github\.com/);
+    expect(headers).toContain("Referrer-Policy: no-referrer");
+    expect(headers).toContain("X-Content-Type-Options: nosniff");
+    expect(headers).toContain("Strict-Transport-Security: max-age=");
+    expect(headers).toContain("Cross-Origin-Opener-Policy: same-origin");
+    expect(readFileSync(join(__dirname, "..", "wrangler.toml"), "utf8")).toContain('run_worker_first = ["/api/*"]');
   });
 
   it("answers unknown API paths with 404", async () => {

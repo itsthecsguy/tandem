@@ -17,8 +17,9 @@ directory = "./dist"
 binding = "ASSETS"
 # Paths like /auth/callback load the app, which routes them itself.
 not_found_handling = "single-page-application"
-# Every request goes through the Worker, so it can add security headers.
-run_worker_first = true
+# Only sign-in runs the Worker. Pages and files come straight from the assets,
+# with the headers in public/_headers, which costs nothing on the free plan.
+run_worker_first = ["/api/*"]
 
 [vars]
 # The client ID of the GitHub OAuth app whose callback URL is

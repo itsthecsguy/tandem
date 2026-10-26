@@ -1,0 +1,17 @@
+# Response headers for every page and file of the site. Cloudflare serves these
+# straight from static assets without running the Worker, which only answers
+# /api/* (see wrangler.toml), so page loads cost nothing on the free plan.
+#
+# script-src 'self': no script from anywhere but the site, so nothing else can
+# read the GitHub token in the browser. connect-src: GitHub's API, and the
+# storage its firmware downloads redirect to. Referrer-Policy: the sign-in
+# callback's URL holds a code, never send it anywhere. HSTS only counts over
+# HTTPS. COOP: sign-in is a full-page redirect, so no other window needs a
+# handle on this one.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self' https://api.github.com https://*.blob.core.windows.net https://*.actions.githubusercontent.com; frame-ancestors 'none'; base-uri 'none'; form-action 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: serial=(self)
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Cross-Origin-Opener-Policy: same-origin
