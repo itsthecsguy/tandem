@@ -4,7 +4,7 @@ Edit your Kinesis Advantage 360 Pro layout, build its firmware in your own GitHu
 
 Tandem runs in the browser tab. Your layout lives in a GitHub repo you own, GitHub builds the firmware, and Chrome or Edge copies it onto the keyboard over USB. The site's only server code is a small Cloudflare Worker that finishes GitHub sign-in.
 
-This is a prototype.
+This is a prototype. It's an independent project, not made or endorsed by Kinesis Corporation.
 
 ## Use it
 
@@ -17,6 +17,10 @@ This is a prototype.
 5. Run the one-time setup. Start setup opens Chrome's list for the left half's update port right away, since Chrome only opens it from a click and adds ADV360PRO to it once the half is in update mode. So while GitHub builds the firmware, you press two keys on the left half and pick ADV360PRO, and Tandem sends that half its firmware once the build is done. The left half's new firmware restarts the right half for you, so for the right half you only pick its ADV360PRO. After that, an update is one click: the halves restart into update mode by themselves and Tandem sends the firmware over serial, with nothing to press or pick. Chrome remembers each half's update port per browser profile, and the port only exists while the half is in update mode, so a browser that didn't do the setup, such as another computer or a new Incognito window, gets a one-minute "Trust this browser" step in onboarding: Tandem restarts each half, you connect its ADV360PRO, and it sends back the build it already runs.
 
 Safari and Firefox can't talk to the keyboard. They can still edit the layout and build firmware, and an update ends with both files to copy onto the halves by hand.
+
+## Privacy
+
+Tandem has no accounts of its own, no database and no analytics. The GitHub token, the repo you picked and downloaded firmware stay in your browser's storage for the site. Your browser talks to GitHub's API and to the keyboard directly. The only thing that passes through the site's Worker is the sign-in code, or the refresh token when the GitHub token renews, which it hands to GitHub with the app's secret and doesn't keep. The full page is [tandemkb.com/privacy](https://tandemkb.com/privacy), from `src/Privacy.tsx`.
 
 ## How an update runs
 
@@ -91,9 +95,9 @@ The site is the `dist/` build served by the Worker in `worker/`, on Cloudflare's
 1. Register the domain and add it to Cloudflare.
 2. Create a GitHub OAuth app with the callback URL `https://tandemkb.com/auth/callback`. Put its client ID in `wrangler.toml` as `GITHUB_CLIENT_ID`.
 3. Run `npx wrangler secret put GITHUB_CLIENT_SECRET` and paste the app's client secret.
-4. Run `npm run build && npx wrangler deploy`, then add `tandemkb.com` as the Worker's custom domain in Cloudflare.
+4. Run `npx wrangler login` once, then `npm run build && npx wrangler deploy`. `wrangler.toml` makes `tandemkb.com` the Worker's custom domain, so Cloudflare sets up its DNS record and certificate.
 
-The Worker only trades codes for its own origin and callback URL, keeps no tokens, and serves the site with a content security policy that allows scripts from the site alone.
+The Worker only trades codes for its own origin and callback URL, and keeps no tokens. It serves the site with a content security policy that allows scripts from the site alone, HSTS, and a cross-origin opener policy, and blocks framing.
 
 To update the config template, edit `template/` and run `scripts/publish-template.sh`, which commits it to [itsthecsguy/tandem-config](https://github.com/itsthecsguy/tandem-config).
 

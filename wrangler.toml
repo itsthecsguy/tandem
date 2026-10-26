@@ -8,6 +8,10 @@ main = "worker/index.ts"
 compatibility_date = "2026-10-01"
 send_metrics = false
 
+# tandemkb.com is a zone on the same Cloudflare account. Deploying attaches it
+# to this Worker, DNS record and certificate included. `wrangler dev` ignores it.
+routes = [{ pattern = "tandemkb.com", custom_domain = true }]
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"

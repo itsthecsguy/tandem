@@ -25,7 +25,10 @@ const CSP = [
 ].join("; ");
 
 function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" },
+  });
 }
 
 interface GitHubToken {
@@ -104,6 +107,10 @@ export default {
     // The sign-in callback's URL holds a code. Never send it anywhere.
     headers.set("referrer-policy", "no-referrer");
     headers.set("permissions-policy", "serial=(self)");
+    // Browsers only keep this from HTTPS answers, so it's harmless in local dev.
+    headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
+    // Sign-in is a full-page redirect, so no other window needs a handle on this one.
+    headers.set("cross-origin-opener-policy", "same-origin");
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   },
 };

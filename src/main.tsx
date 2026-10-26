@@ -3,12 +3,24 @@ import { createRoot } from "react-dom/client";
 
 import { initApi } from "./api";
 import { App } from "./App";
+import { Privacy } from "./Privacy";
 import "./styles.css";
 
-initApi().then(() =>
-  createRoot(document.getElementById("root")!).render(
+const root = createRoot(document.getElementById("root")!);
+
+// The privacy page needs no GitHub or keyboard, so it skips setting those up.
+if (location.pathname === "/privacy") {
+  root.render(
     <StrictMode>
-      <App />
+      <Privacy />
     </StrictMode>,
-  ),
-);
+  );
+} else {
+  initApi().then(() =>
+    root.render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    ),
+  );
+}

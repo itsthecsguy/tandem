@@ -97,11 +97,19 @@ export function Onboarding({ session, onSession }: { session: Session; onSession
         </ol>
 
         <div className="ob__side-foot">
-          <p>
-            {api.caps.engine === "browser"
-              ? "Your layout lives in your GitHub repo, GitHub builds the firmware, and this browser puts it on the keyboard."
-              : "No Tandem servers. Your layout lives in your GitHub repo, and only flashing runs on this Mac."}
-          </p>
+          <div>
+            <p>
+              {api.caps.engine === "browser"
+                ? "Your layout lives in your GitHub repo, GitHub builds the firmware, and this browser puts it on the keyboard."
+                : "No Tandem servers. Your layout lives in your GitHub repo, and only flashing runs on this Mac."}
+            </p>
+            <p>
+              <a href="/privacy" target="_blank" rel="noreferrer">
+                Privacy
+              </a>
+              . Not affiliated with Kinesis.
+            </p>
+          </div>
           <ThemeMenu />
         </div>
       </aside>

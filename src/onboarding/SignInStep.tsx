@@ -139,7 +139,13 @@ export function SignInStep({ session, onSession }: { session: Session; onSession
               <button type="button" className="btn btn--primary btn--lg" disabled={busy} onClick={() => signIn(false)}>
                 <GitHubMark /> {busy ? "Opening GitHub…" : "Sign in with GitHub"}
               </button>
-              <p className="hint">Tandem asks for your public repos and their workflows. You can allow private repos later.</p>
+              <p className="hint">
+                Tandem asks for your public repos and their workflows. You can allow private repos later.{" "}
+                <a href="/privacy" target="_blank" rel="noreferrer">
+                  What Tandem keeps, and where
+                </a>
+                .
+              </p>
             </>
           )}
           {device && (

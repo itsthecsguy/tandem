@@ -1796,6 +1796,10 @@ code {
   font-weight: 600;
 }
 
+.hint a {
+  color: var(--text-2);
+}
+
 .recorder .hint {
   max-width: 280px;
 }
@@ -2089,6 +2093,14 @@ code {
   color: var(--text-3);
   font-size: var(--fs-xs);
   line-height: 1.5;
+}
+
+.ob__side-foot p + p {
+  margin-top: 6px;
+}
+
+.ob__side-foot a {
+  color: var(--text-2);
 }
 
 .ob__side-foot .menu--right {
@@ -2955,4 +2967,76 @@ button.link:hover {
 button.link:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* The privacy page */
+
+.doc {
+  min-height: 100%;
+  background: var(--bg);
+}
+
+.doc__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 18px 20px;
+}
+
+.doc__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.doc__body {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 12px 20px 64px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.doc__body h1 {
+  margin: 16px 0 14px;
+  color: var(--text);
+  font-size: var(--fs-3xl);
+  font-weight: 600;
+  letter-spacing: -0.022em;
+}
+
+.doc__body h2 {
+  margin: 32px 0 8px;
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.doc__body p,
+.doc__body ul {
+  margin: 0 0 12px;
+}
+
+.doc__body ul {
+  padding-left: 20px;
+}
+
+.doc__body li + li {
+  margin-top: 4px;
+}
+
+.doc__body a {
+  color: var(--accent);
+}
+
+.doc__body .doc__foot {
+  margin-top: 40px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
 }

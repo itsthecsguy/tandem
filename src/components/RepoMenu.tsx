@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronDown, LogOut, Repeat, RotateCcw } from "lucide-react";
+import { ArrowUpRight, ChevronDown, LogOut, Repeat, RotateCcw, Shield } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { RepoRef } from "../../shared/types";
@@ -46,6 +46,9 @@ export function RepoMenu({ repo, login, onChangeRepo, onRestartSetup, onSignOut 
           <button type="button" className="menu__item" role="menuitem" onClick={onRestartSetup}>
             <RotateCcw size={15} /> Run setup again
           </button>
+          <a className="menu__item" role="menuitem" href="/privacy" target="_blank" rel="noreferrer">
+            <Shield size={15} /> Privacy
+          </a>
           <button type="button" className="menu__item" role="menuitem" onClick={onSignOut}>
             <LogOut size={15} /> Sign out
           </button>

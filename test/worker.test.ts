@@ -38,6 +38,7 @@ describe("worker", () => {
     const res = await worker.fetch(exchange(good), env());
     expect(await res.json()).toEqual({ token: "gho_new", scope: "public_repo,workflow" });
     expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(sent).toEqual([
       {
         url: "https://github.com/login/oauth/access_token",
@@ -94,6 +95,8 @@ describe("worker", () => {
     expect(res.headers.get("content-security-policy")).toContain("https://api.github.com");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("strict-transport-security")).toContain("max-age=");
+    expect(res.headers.get("cross-origin-opener-policy")).toBe("same-origin");
   });
 
   it("answers unknown API paths with 404", async () => {
