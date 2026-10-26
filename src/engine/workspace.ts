@@ -3,7 +3,7 @@
 // branch's latest commit and commits each save back to it.
 
 import { GitHubApi, GitHubError } from "../../shared/github";
-import { parseKeymap, toKeymap, writeKeymap } from "../../shared/keymap";
+import { keepSpelling, parseKeymap, toKeymap, writeKeymap } from "../../shared/keymap";
 import { readLayout } from "../../shared/layout";
 import { KEYMAP_PATH, WORKFLOW_PATH, setupPlan } from "../../shared/setup";
 import type { AppState, Keymap, LayoutKey, RepoOption, RepoRef, Session, SetupStatus } from "../../shared/types";
@@ -224,7 +224,8 @@ export async function openWorkspace(force = false): Promise<Workspace> {
 }
 
 /** Writes the keymap and commits it. Returns the new commit SHA. */
-export async function saveKeymap(keymap: Keymap): Promise<string> {
+/** Commits the keymap. When it matches what's on the branch, commits nothing and says so. */
+export async function saveKeymap(keymap: Keymap): Promise<{ sha: string; committed: boolean }> {
   const ws = await openWorkspace();
   const gh = await github();
   const repo = connectedRepo();
@@ -233,12 +234,13 @@ export async function saveKeymap(keymap: Keymap): Promise<string> {
     await openWorkspace(true);
     throw new Error("The branch changed on GitHub since Tandem last loaded it. Tandem reloaded it, so check your keys and save again.");
   }
-  const text = writeKeymap(ws.keymap, keymap, ws.rows);
+  const text = writeKeymap(ws.keymap, keepSpelling(toKeymap(parseKeymap(ws.keymap)), keymap), ws.rows);
+  if (text === ws.keymap) return { sha: head, committed: false };
   const sha = await gh.commit(repo.owner, repo.name, repo.branch, head, [{ path: ws.keymapPath, content: text }], "Update layout with Tandem");
   workspace = { ...ws, sha, keymap: text };
   checkedAt = Date.now();
   saveState({ syncedSha: sha });
-  return sha;
+  return { sha, committed: true };
 }
 
 export async function appState(): Promise<AppState> {

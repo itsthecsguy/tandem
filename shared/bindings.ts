@@ -1,4 +1,4 @@
-import { keyLabel } from "./keycodes";
+import { keyLabel, sameKey } from "./keycodes";
 
 // A ZMK binding such as "&lt 4 BACKSPACE", in a shape the editor can work with.
 export type Binding =
@@ -260,4 +260,17 @@ export function convertBinding(b: Binding, kind: BindingKind, fallbackLayer: num
     case "raw":
       return { kind, text: formatBinding(b) };
   }
+}
+
+/** True when two bindings do the same thing, e.g. "&kp UNDER" and "&kp UNDERSCORE". */
+export function sameBinding(a: string, b: string): boolean {
+  if (a.trim() === b.trim()) return true;
+  const x = parseBinding(a);
+  const y = parseBinding(b);
+  if (x.kind !== y.kind || x.kind === "raw" || y.kind === "raw") return false;
+  const fields = (v: Binding) => v as Record<string, string | number>;
+  return Object.keys(fields(x)).every((k) => {
+    const [p, q] = [fields(x)[k], fields(y)[k]];
+    return typeof p === "string" && typeof q === "string" ? sameKey(p, q) : p === q;
+  });
 }

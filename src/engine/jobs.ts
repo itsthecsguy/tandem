@@ -67,9 +67,13 @@ export function startUpdate(
     try {
       emit({ type: "step", step: "save", state: "active", detail: "Committing to GitHub" });
       let sha: string;
-      if (keymap) {
-        sha = await saveKeymap(keymap);
+      const saved = keymap ? await saveKeymap(keymap) : null;
+      if (saved?.committed) {
+        sha = saved.sha;
         emit({ type: "step", step: "save", state: "done", detail: `Committed ${sha.slice(0, 7)}` });
+      } else if (saved) {
+        sha = saved.sha;
+        emit({ type: "step", step: "save", state: "skipped", detail: `No changes, using ${sha.slice(0, 7)}` });
       } else {
         sha = (await openWorkspace(true)).sha;
         emit({ type: "step", step: "save", state: "skipped", detail: `No changes, using ${sha.slice(0, 7)}` });

@@ -2,6 +2,7 @@
 // write: the contents of each layer's `bindings = < ... >`, and Tandem's
 // marked block of behavior definitions. Everything else stays byte for byte.
 
+import { sameBinding } from "./bindings";
 import type { Keymap, Layer, RepeatTiming } from "./types";
 
 export const DEFAULT_REPEAT: RepeatTiming = { tappingTermMs: 200, quickTapMs: 200 };
@@ -451,4 +452,21 @@ export function replaceLayers(text: string, layers: Omit<Layer, "node">[], rowLe
 
   const content = `\n${indent}compatible = "zmk,keymap";\n\n${body}\n${closeIndent}`;
   return applyEdits(text, [{ ...parsed.keymapBody, text: content }]);
+}
+
+/**
+ * Keys in `next` that do what the saved file already has keep the file's
+ * spelling, so a key set back to what it was leaves its layer unchanged,
+ * spacing and all.
+ */
+export function keepSpelling(saved: Keymap, next: Keymap): Keymap {
+  const before = new Map(saved.layers.map((l) => [l.node, l]));
+  return {
+    ...next,
+    layers: next.layers.map((layer) => {
+      const old = before.get(layer.node);
+      if (!old) return layer;
+      return { ...layer, bindings: layer.bindings.map((b, i) => (old.bindings[i] !== undefined && sameBinding(b, old.bindings[i]) ? old.bindings[i] : b)) };
+    }),
+  };
 }

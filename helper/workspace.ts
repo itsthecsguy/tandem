@@ -10,7 +10,7 @@ import { basename, join } from "node:path";
 
 import type { BuildRecord, BuildSettings, Keymap, LayoutKey, RepoRef, Session, SetupStatus, Side } from "../shared/types";
 import { CLIENT_ID, GitHub, REQUIRED_SCOPES, forgetToken, getToken, ghCliToken, signOut as dropToken } from "./github";
-import { parseKeymap, toKeymap, writeKeymap } from "../shared/keymap";
+import { keepSpelling, parseKeymap, toKeymap, writeKeymap } from "../shared/keymap";
 import { readLayout } from "../shared/layout";
 import { type NewRepoOptions, createRepo } from "./newrepo";
 import { KEYMAP_PATH, WORKFLOW_PATH, moduleFiles, setupPlan } from "./setup";
@@ -267,7 +267,8 @@ export async function readKeymap(): Promise<Keymap> {
 }
 
 /** Writes the keymap and commits it. Returns the new commit SHA. */
-export async function saveKeymap(keymap: Keymap): Promise<string> {
+/** Commits the keymap. When it matches what's on the branch, commits nothing and says so. */
+export async function saveKeymap(keymap: Keymap): Promise<{ sha: string; committed: boolean }> {
   const ws = await openWorkspace();
   const gh = await github();
   const repo = await connectedRepo();
@@ -279,12 +280,14 @@ export async function saveKeymap(keymap: Keymap): Promise<string> {
     throw new Error("The branch changed on GitHub since Tandem last loaded it. Tandem reloaded it, so check your keys and save again.");
   }
 
-  const text = writeKeymap(await readFile(ws.keymapFile, "utf8"), keymap, ws.rows);
+  const current = await readFile(ws.keymapFile, "utf8");
+  const text = writeKeymap(current, keepSpelling(toKeymap(parseKeymap(current)), keymap), ws.rows);
+  if (text === current) return { sha: head, committed: false };
   const path = `config/${basename(ws.keymapFile)}`;
   const sha = await gh.commit(repo.owner, repo.name, repo.branch, head, [{ path, content: text }], "Update layout with Tandem");
   await writeFile(ws.keymapFile, text);
   await saveState({ syncedSha: sha });
-  return sha;
+  return { sha, committed: true };
 }
 
 /** The build ID the halves report for the current commit: its short SHA. */

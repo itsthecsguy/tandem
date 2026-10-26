@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { formatBinding, parseBinding } from "../shared/bindings";
-import { importKeymap, parseKeymap, toKeymap, writeKeymap } from "../shared/keymap";
+import { formatBinding, parseBinding, sameBinding } from "../shared/bindings";
+import { importKeymap, keepSpelling, parseKeymap, toKeymap, writeKeymap } from "../shared/keymap";
 import { readLayout } from "../shared/layout";
 
 const fixture = (name: string) => readFileSync(join(__dirname, "fixtures", name), "utf8");
@@ -87,6 +87,28 @@ describe("writeKeymap", () => {
     const out = writeKeymap(keymapText, keymap, rows);
     expect(out).toContain("ltr: layer_tap_repeat {");
     expect(parseKeymap(out).repeat).toEqual({ tappingTermMs: 180, quickTapMs: 150 });
+  });
+});
+
+describe("sameBinding", () => {
+  it("matches bindings that do the same thing under other names", () => {
+    expect(sameBinding("&kp UNDER", "&kp UNDERSCORE")).toBe(true);
+    expect(sameBinding("&kp BSPC", "&kp BACKSPACE")).toBe(true);
+    expect(sameBinding("&mt LSHFT A", "&mt LEFT_SHIFT A")).toBe(true);
+    expect(sameBinding("&kp A", "&kp B")).toBe(false);
+    expect(sameBinding("&lt 1 A", "&lt 2 A")).toBe(false);
+    expect(sameBinding("&kp A", "&mt LSHFT A")).toBe(false);
+  });
+});
+
+describe("keepSpelling", () => {
+  it("keeps the file's name for a key picked again under another name", () => {
+    const text = keymapText;
+    const saved = toKeymap(parseKeymap(text));
+    const next = structuredClone(saved);
+    const i = next.layers[0].bindings.indexOf("&kp BSPC");
+    next.layers[0].bindings[i] = "&kp BACKSPACE";
+    expect(writeKeymap(text, keepSpelling(saved, next), rows)).toBe(writeKeymap(text, saved, rows));
   });
 });
 

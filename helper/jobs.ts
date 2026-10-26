@@ -55,9 +55,14 @@ export function startUpdate(keymap?: Keymap): Job {
     try {
       emit({ type: "step", step: "save", state: "active", detail: "Committing to GitHub" });
       let sha: string;
-      if (keymap) {
-        sha = await saveKeymap(keymap);
-        emit({ type: "step", step: "save", state: "done", detail: `Committed ${sha.slice(0, 7)}` });
+      const saved = keymap ? await saveKeymap(keymap) : null;
+      if (saved) {
+        sha = saved.sha;
+        emit(
+          saved.committed
+            ? { type: "step", step: "save", state: "done", detail: `Committed ${sha.slice(0, 7)}` }
+            : { type: "step", step: "save", state: "skipped", detail: `No changes, using ${sha.slice(0, 7)}` },
+        );
       } else {
         await syncWorkspace(true);
         sha = (await loadState()).syncedSha!;

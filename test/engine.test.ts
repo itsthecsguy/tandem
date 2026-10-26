@@ -124,6 +124,27 @@ describe("browser engine", () => {
     await expect(e.saveKeymap(keymap)).rejects.toThrow(/changed on GitHub/);
   });
 
+  it("commits nothing when the layout matches the branch", async () => {
+    fake.addRepo("octocat", "adv360", tandemRepo());
+    const e = await engine();
+    await e.connect({ owner: "octocat", name: "adv360", branch: "main" });
+    const head = fake.head("octocat", "adv360");
+    const { keymap } = await e.state();
+    // The same key under another name, as the picker spells it.
+    const i = keymap.layers[0].bindings.indexOf("&kp BSPC");
+    keymap.layers[0].bindings[i] = "&kp BACKSPACE";
+    await e.saveKeymap(keymap);
+    expect(fake.head("octocat", "adv360")).toBe(head);
+
+    const events = record(e);
+    await e.update(keymap);
+    expect(await until(() => events.find((x) => x.type === "step" && x.step === "save" && x.state !== "active"))).toMatchObject({
+      state: "skipped",
+      detail: `No changes, using ${head.slice(0, 7)}`,
+    });
+    await e.cancel();
+  });
+
   it("adds Tandem to a repo with Kinesis's config", async () => {
     fake.addRepo("octocat", "kinesis-fork", kinesisRepo());
     const e = await engine();
