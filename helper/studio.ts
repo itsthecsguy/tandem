@@ -14,7 +14,12 @@ import type { RpcTransport } from "@zmkfirmware/zmk-studio-ts-client/transport/i
 // bundled for Node by `npm run vendor`.
 import { call_rpc, create_rpc_connection } from "./vendor/zmk-studio-client.js";
 
-import { convertStudioKeymap, type ImportedLayout } from "../shared/studio";
+import { readFileSync } from "node:fs";
+
+import { KINESIS_LABELS, behaviorLabels, convertStudioKeymap, type ImportedLayout } from "../shared/studio";
+
+// A new repo starts from the template, so its macros are the ones a key can name.
+const LABELS = new Map([...KINESIS_LABELS, ...behaviorLabels(readFileSync(new URL("../template/config/macros.dtsi", import.meta.url), "utf8"))]);
 
 const LOCKED = 0;
 const UNLOCKED = 1;
@@ -132,7 +137,7 @@ export async function readStudioLayout(ports: string[], waitMs: number, onLocked
       if (details) names.set(id, details.displayName);
     }
 
-    return convertStudioKeymap(keymap.layers, names);
+    return convertStudioKeymap(keymap.layers, names, LABELS);
   } finally {
     await s.close();
   }

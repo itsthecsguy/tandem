@@ -6,7 +6,8 @@
 
 import { type RpcConnection, call_rpc, create_rpc_connection } from "@zmkfirmware/zmk-studio-ts-client";
 
-import { type ImportedLayout, convertStudioKeymap } from "../../shared/studio";
+import macrosDtsi from "../../template/config/macros.dtsi?raw";
+import { type ImportedLayout, KINESIS_LABELS, behaviorLabels, convertStudioKeymap } from "../../shared/studio";
 import { type PortLike, closePort, exclusive, openPort } from "./serial";
 import { sleep, withTimeout } from "./util";
 
@@ -92,7 +93,8 @@ export async function readStudioLayout(ports: PortLike[], waitMs: number): Promi
         .behaviors?.getBehaviorDetails;
       if (details) names.set(id, details.displayName);
     }
-    return convertStudioKeymap(keymap.layers, names);
+    // A new repo starts from the template, so its macros are the ones a key can name.
+    return convertStudioKeymap(keymap.layers, names, new Map([...KINESIS_LABELS, ...behaviorLabels(macrosDtsi)]));
   });
   if (!layout) throw new Error("The keyboard didn't answer over ZMK Studio.");
   return layout;

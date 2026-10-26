@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { usageToCode } from "../shared/hid";
 import { parseKeymap, replaceLayers } from "../shared/keymap";
 import { readLayout } from "../shared/layout";
-import { convertStudioKeymap, studioToBinding } from "../shared/studio";
+import { behaviorLabels, convertStudioKeymap, studioToBinding } from "../shared/studio";
 
 const usage = (page: number, id: number, mods = 0) => ((mods << 24) | (page << 16) | id) >>> 0;
 const fixture = (name: string) => readFileSync(join(__dirname, "fixtures", name), "utf8");
@@ -43,6 +43,24 @@ describe("studioToBinding", () => {
     expect(studioToBinding("Bluetooth", { behaviorId: 4, param1: 3, param2: 2 }, layerIndex)).toBe("&bt BT_SEL 2");
     expect(studioToBinding("Transparent", { behaviorId: 5, param1: 0, param2: 0 }, layerIndex)).toBe("&trans");
     expect(studioToBinding("Studio Unlock", { behaviorId: 6, param1: 0, param2: 0 }, layerIndex)).toBe("&studio_unlock");
+  });
+
+  it("gives backlight and underglow both their parameters, by name where ZMK has one", () => {
+    // &bl and &rgb_ug take two cells. One alone makes the devicetree read the next number as a node.
+    expect(studioToBinding("Backlight", { behaviorId: 7, param1: 2, param2: 0 }, layerIndex)).toBe("&bl BL_TOG");
+    expect(studioToBinding("Backlight", { behaviorId: 7, param1: 3, param2: 0 }, layerIndex)).toBe("&bl BL_INC");
+    expect(studioToBinding("Backlight", { behaviorId: 7, param1: 6, param2: 40 }, layerIndex)).toBe("&bl BL_SET 40");
+    expect(studioToBinding("Underglow", { behaviorId: 8, param1: 0, param2: 0 }, layerIndex)).toBe("&rgb_ug RGB_TOG");
+    expect(studioToBinding("Underglow", { behaviorId: 8, param1: 15, param2: 0x10ff80 }, layerIndex)).toBe(`&rgb_ug 15 ${0x10ff80}`);
+    expect(studioToBinding("External Power", { behaviorId: 9, param1: 2, param2: 0 }, layerIndex)).toBe("&ext_power EP_TOG");
+  });
+
+  it("knows Kinesis's own keys", () => {
+    expect(studioToBinding("Battery Level", { behaviorId: 10, param1: 0, param2: 0 }, layerIndex)).toBe("&stp STP_BAT");
+    expect(studioToBinding("macro_ver", { behaviorId: 11, param1: 0, param2: 0 }, layerIndex)).toBe("&macro_ver");
+    const labels = behaviorLabels(readFileSync(join(__dirname, "..", "template/config/macros.dtsi"), "utf8"));
+    expect(studioToBinding("Windows Cut", { behaviorId: 12, param1: 0, param2: 0 }, layerIndex, labels)).toBe("&Win_Cut");
+    expect(studioToBinding("macro_quotes", { behaviorId: 13, param1: 0, param2: 0 }, layerIndex, labels)).toBe("&macro_quotes");
   });
 
   it("returns null for behaviors it doesn't know", () => {

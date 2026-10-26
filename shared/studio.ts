@@ -22,11 +22,49 @@ export interface ImportedLayout {
   unknown: string[];
 }
 
+// Command numbers as Kinesis's ZMK fork defines them in dt-bindings/zmk/*.h.
+// &bl and &rgb_ug take two parameters, and the names below without a
+// parameter of their own expand to the command and a 0.
 const BT = ["BT_CLR", "BT_NXT", "BT_PRV", "BT_SEL", "BT_CLR_ALL", "BT_DISC"];
 const OUT = ["OUT_TOG", "OUT_USB", "OUT_BLE"];
+const BL = ["BL_ON", "BL_OFF", "BL_TOG", "BL_INC", "BL_DEC", "BL_CYCLE"];
+const BL_SET = 6;
+const RGB = ["RGB_TOG", "RGB_ON", "RGB_OFF", "RGB_HUI", "RGB_HUD", "RGB_SAI", "RGB_SAD", "RGB_BRI", "RGB_BRD", "RGB_SPI", "RGB_SPD", "RGB_EFF", "RGB_EFR"];
+const EP = ["EP_OFF", "EP_ON", "EP_TOG"];
+
+/**
+ * Behaviors without parameters that Kinesis's config defines, by the name
+ * Studio shows for them: macro_ver from bin/get_version.sh, which has no
+ * display name, and the macros in macros.dtsi (see behaviorLabels).
+ */
+export const KINESIS_LABELS = new Map([["macro_ver", "macro_ver"]]);
+
+/**
+ * Labels of the parameterless behaviors in a .dtsi file, by every name Studio
+ * might show for them: the display name, the legacy label, or the node label.
+ */
+export function behaviorLabels(dtsi: string): Map<string, string> {
+  const labels = new Map<string, string>();
+  for (const m of dtsi.matchAll(/([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*)\s*\{([^{}]*)/g)) {
+    const [, label, node, body] = m;
+    if (!/#binding-cells\s*=\s*<0>/.test(body)) continue;
+    labels.set(label.toLowerCase(), label);
+    labels.set(node.toLowerCase(), label);
+    for (const prop of ["display-name", "label"]) {
+      const value = new RegExp(`${prop}\\s*=\\s*"([^"]+)"`).exec(body)?.[1];
+      if (value) labels.set(value.trim().toLowerCase(), label);
+    }
+  }
+  return labels;
+}
 
 /** Turns one Studio binding into ZMK keymap syntax, or null if Tandem doesn't know it. */
-export function studioToBinding(displayName: string, b: StudioBinding, layerIndex: (id: number) => number): string | null {
+export function studioToBinding(
+  displayName: string,
+  b: StudioBinding,
+  layerIndex: (id: number) => number,
+  labels: Map<string, string> = KINESIS_LABELS,
+): string | null {
   const key = (usage: number) => usageToCode(usage) ?? `0x${usage.toString(16)}`;
   const layer = (id: number) => {
     const i = layerIndex(id);
@@ -76,17 +114,27 @@ export function studioToBinding(displayName: string, b: StudioBinding, layerInde
       return "&key_repeat";
     case "underglow":
     case "rgb underglow":
-      return b.param2 ? `&rgb_ug ${b.param1} ${b.param2}` : `&rgb_ug ${b.param1}`;
+      return RGB[b.param1] && !b.param2 ? `&rgb_ug ${RGB[b.param1]}` : `&rgb_ug ${b.param1} ${b.param2}`;
     case "backlight":
-      return b.param2 ? `&bl ${b.param1} ${b.param2}` : `&bl ${b.param1}`;
+      if (b.param1 === BL_SET) return `&bl BL_SET ${b.param2}`;
+      return BL[b.param1] && !b.param2 ? `&bl ${BL[b.param1]}` : `&bl ${b.param1} ${b.param2}`;
     case "external power":
-      return `&ext_power ${b.param1}`;
-    default:
-      return null;
+      return `&ext_power ${EP[b.param1] ?? b.param1}`;
+    case "battery level":
+      // Kinesis's &stp, whose one command so far is STP_BAT.
+      return `&stp ${b.param1 === 0 ? "STP_BAT" : b.param1}`;
+    default: {
+      const label = labels.get(displayName.trim().toLowerCase());
+      return label && !b.param1 && !b.param2 ? `&${label}` : null;
+    }
   }
 }
 
-export function convertStudioKeymap(layers: StudioLayer[], behaviorNames: Map<number, string>): ImportedLayout {
+export function convertStudioKeymap(
+  layers: StudioLayer[],
+  behaviorNames: Map<number, string>,
+  labels: Map<string, string> = KINESIS_LABELS,
+): ImportedLayout {
   const unknown: string[] = [];
   const index = (id: number) => layers.findIndex((l) => l.id === id);
   return {
@@ -96,7 +144,7 @@ export function convertStudioKeymap(layers: StudioLayer[], behaviorNames: Map<nu
         name,
         bindings: l.bindings.map((b, k) => {
           const display = behaviorNames.get(b.behaviorId) ?? `behavior ${b.behaviorId}`;
-          const text = studioToBinding(display, b, index);
+          const text = studioToBinding(display, b, index, labels);
           if (text) return text;
           unknown.push(`${name}, key ${k + 1}: ${display}`);
           return "&none";
