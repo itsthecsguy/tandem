@@ -33,7 +33,7 @@ import {
   readTandemKeymap,
   restartToBootloader,
 } from "./serial";
-import { loadDrive, loadDriveReuse, loadRightBuild, saveDrive, saveDriveReuse, saveRightBuild } from "./store";
+import { loadDrive, loadDriveReuse, loadRightBuild, loadUpdatePorts, saveDrive, saveDriveReuse, saveRightBuild, saveUpdatePorts } from "./store";
 import { uf2ToImage } from "./uf2";
 import { sleep, withTimeout } from "./util";
 import { parseKeymap, toKeymap } from "../../shared/keymap";
@@ -58,6 +58,8 @@ export interface Deps {
   driveReuse?: { load(): boolean; save(on: boolean): void };
   /** The last build sent to the right half through the left half. */
   rightBuild?: { load(): string | null; save(build: string): void };
+  /** Halves whose update port this browser has sent firmware over. */
+  updatePorts?: { load(): Side[]; save(sides: Side[]): void };
   /** How long to wait for things: the saved drive, a restarting half, its update port. */
   timing?: Partial<Timing>;
 }
@@ -106,6 +108,7 @@ function browserDeps(): Deps | null {
     saveDrive: (drive) => saveDrive(drive),
     driveReuse: { load: loadDriveReuse, save: saveDriveReuse },
     rightBuild: { load: loadRightBuild, save: saveRightBuild },
+    updatePorts: { load: loadUpdatePorts, save: saveUpdatePorts },
   };
 }
 
@@ -122,6 +125,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
   const busy = new Set<PortLike>();
   const watchers = new Set<(d: DevicesStatus) => void>();
   let rightBuild = deps.rightBuild?.load() ?? null;
+  const trusted = new Set<Side>(deps.updatePorts?.load() ?? []);
   let devices = compute();
   let last = JSON.stringify(devices);
   let drive: DriveLike | null = null;
@@ -206,7 +210,14 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     };
     const left = half("left");
     const right = half("right");
-    return { left, right, unknownBootloaders: [], needsAccess: !left.autoflash || !right.autoflash, scannedAt: new Date().toISOString() };
+    return {
+      left,
+      right,
+      unknownBootloaders: [],
+      needsAccess: !left.autoflash || !right.autoflash,
+      updatePorts: [...trusted],
+      scannedAt: new Date().toISOString(),
+    };
   }
 
   /** Keeps probes off ports a Studio session holds, which can be minutes while it waits for the unlock key. */
@@ -522,6 +533,11 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       emit({ type: "step", step, state: "active", detail: "Sending firmware" });
       try {
         await sendOverSerial(method.port, target, build[target], emit, signal);
+        // Chrome trusts this half's update port in this browser from now on.
+        if (!trusted.has(target)) {
+          trusted.add(target);
+          deps!.updatePorts?.save([...trusted]);
+        }
       } catch (err) {
         // The half is still in update mode, so its drive works as a fallback.
         emit({ type: "step", step, state: "active", detail: `Sending over the update port failed (${(err as Error).message}). Copy it to the drive instead.` });

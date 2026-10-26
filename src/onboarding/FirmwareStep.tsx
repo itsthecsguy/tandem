@@ -1,7 +1,7 @@
 import { Check, Loader2, Plug, Usb } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import type { AppState, Session } from "../../shared/types";
+import type { AppState, DevicesStatus, Session } from "../../shared/types";
 import { api, useLive } from "../api";
 import { UpdateProgress, isSetup, updateHeading } from "../components/UpdateSheet";
 import { viewJob } from "../lib/job";
@@ -12,6 +12,8 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
   const [started, setStarted] = useState(false);
   /** The update started as the one-time setup: some half couldn't restart by itself. */
   const [firstTime, setFirstTime] = useState(false);
+  /** The update started to get Chrome to trust the halves' update ports in this browser. */
+  const [trusting, setTrusting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +37,7 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
     setError(null);
     setStarted(true);
     setFirstTime(!(devices?.left.autoflash && devices?.right.autoflash));
+    setTrusting(!!devices && devices.left.autoflash && devices.right.autoflash && !trustedHere(devices));
     try {
       await api.update();
     } catch (e) {
@@ -55,20 +58,25 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
   const both = left.mode !== "missing" && right.mode !== "missing";
   const tandem = left.autoflash && right.autoflash;
   const current = tandem && left.build === state.buildId && right.build === state.buildId;
+  const trusted = trustedHere(devices);
 
   if (view) {
     const setup = isSetup(view, firstTime);
     return (
       <>
-        <h1>{updateHeading(view, firstTime)}</h1>
+        <h1>{trusting ? (view.done ? "This browser is trusted" : view.error ? "That stopped" : "Trust this browser") : updateHeading(view, firstTime)}</h1>
         <p className="lede">
-          {view.done
-            ? setup
-              ? "Both halves run Tandem firmware now."
-              : "Both halves run your latest firmware."
-            : setup
-              ? "You only do this once. When it's your turn, Tandem shows what to do right here, one step at a time."
-              : "Tandem builds your firmware on GitHub and updates both halves. No key presses needed."}
+          {trusting
+            ? view.done
+              ? "Chrome trusts both halves' update ports here now, so updates from this browser need no clicks."
+              : "Connect ADV360PRO when Tandem asks, once for each half. No keys needed."
+            : view.done
+              ? setup
+                ? "Both halves run Tandem firmware now."
+                : "Both halves run your latest firmware."
+              : setup
+                ? "You only do this once. When it's your turn, Tandem shows what to do right here, one step at a time."
+                : "Tandem builds your firmware on GitHub and updates both halves. No key presses needed."}
         </p>
         <div className="ob__progress">
           <UpdateProgress
@@ -102,6 +110,50 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
               </button>
             </>
           )}
+        </div>
+      </>
+    );
+  }
+
+  // The keyboard has Tandem firmware, but this browser hasn't sent it
+  // firmware. Chrome asks once per half before a page may use that half's
+  // update port, and the port only exists in update mode. Doing it now
+  // keeps the asks out of the first update from the editor.
+  if (tandem && !trusted) {
+    return (
+      <>
+        <h1>Trust this browser</h1>
+        <p className="lede">
+          Your keyboard already runs Tandem firmware, but this browser hasn't updated it yet. Chrome asks once per half before a site may
+          use the half's update port, and that port only shows up while the half is in update mode.
+        </p>
+        <ol className="ob__plan">
+          <li>
+            <span>
+              <strong>Tandem restarts each half into update mode.</strong> No keys needed.
+            </span>
+          </li>
+          <li>
+            <span>
+              <strong>You connect ADV360PRO in Chrome, once for each half.</strong>
+            </span>
+          </li>
+          <li>
+            <span>
+              <strong>Tandem sends each half {current ? "the build it already runs" : `your latest build, ${state.buildId}`}.</strong> About a
+              minute in all.
+            </span>
+          </li>
+        </ol>
+        <p className="hint">Incognito windows forget this when they close, so each new one asks again.</p>
+        {error && <p className="callout callout--err">{error}</p>}
+        <div className="ob__actions">
+          <button type="button" className="btn btn--ghost" onClick={finish} disabled={busy}>
+            Do this later
+          </button>
+          <button type="button" className="btn btn--primary btn--lg" onClick={start}>
+            Trust this browser
+          </button>
         </div>
       </>
     );
@@ -261,4 +313,11 @@ export function FirmwareStep({ onSession }: { onSession: (s: Session) => void })
       </div>
     </>
   );
+}
+
+/** Chrome trusts both halves' update ports in this browser, as far as Tandem knows. The helper needs none of this. */
+function trustedHere(devices: DevicesStatus): boolean {
+  if (api.caps.engine !== "browser") return true;
+  const ports = devices.updatePorts ?? [];
+  return ports.includes("left") && ports.includes("right");
 }

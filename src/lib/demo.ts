@@ -5,6 +5,7 @@
 //                      left half, then Tandem restarts the right half through the left one
 //                      (&wrong=half: the first key combo lands on the right half)
 //   ?demo=intro        the setup screen before Start
+//   ?demo=trust        a keyboard with Tandem firmware in a browser that hasn't updated it yet
 //   ?demo=repo, ?demo=install   onboarding's layout step
 //   ?demo=<scenario>   the update sheet frozen at one moment, from `scenarios` below
 
@@ -209,8 +210,8 @@ const tandemHalf = (side: Side): HalfStatus => ({
   port: "web-serial",
 });
 
-function devicesFor(left: HalfStatus, right: HalfStatus): DevicesStatus {
-  return { left, right, unknownBootloaders: [], needsAccess: false, scannedAt: new Date().toISOString() };
+function devicesFor(left: HalfStatus, right: HalfStatus, updatePorts: Side[] = []): DevicesStatus {
+  return { left, right, unknownBootloaders: [], needsAccess: false, updatePorts, scannedAt: new Date().toISOString() };
 }
 
 /**
@@ -221,7 +222,8 @@ export function demoEngine(real: Engine): Engine {
   const name = demoName();
   if (!name) return real;
   const wrong = new URLSearchParams(location.search).get("wrong");
-  const walkthrough = name === "walkthrough" || name === "intro";
+  const trust = name === "trust";
+  const walkthrough = name === "walkthrough" || name === "intro" || trust;
 
   // Onboarding remembers the keyboard step per tab. Skip it for the setup demos.
   if (walkthrough) {
@@ -246,7 +248,11 @@ export function demoEngine(real: Engine): Engine {
 
   const listeners = new Set<(e: LiveEvent) => void>();
   const emitLive = (e: LiveEvent) => listeners.forEach((l) => l(e));
-  let devices = walkthrough ? devicesFor(stockLeft(), emptyHalf("right")) : devicesFor(tandemHalf("left"), tandemHalf("right"));
+  let devices = trust
+    ? devicesFor(tandemHalf("left"), tandemHalf("right"))
+    : walkthrough
+      ? devicesFor(stockLeft(), emptyHalf("right"))
+      : devicesFor(tandemHalf("left"), tandemHalf("right"), ["left", "right"]);
   const setDevices = (d: DevicesStatus) => {
     devices = d;
     emitLive({ type: "devices", devices });
@@ -315,6 +321,25 @@ export function demoEngine(real: Engine): Engine {
     await send("right", answer);
   }
 
+  /** Trusting a new browser: each half restarts by itself, and Chrome asks about its update port. */
+  async function playTrust() {
+    emit({ type: "step", step: "save", state: "skipped", detail: `No changes, using ${BUILD}` });
+    emit({ type: "step", step: "build", state: "skipped", detail: `Already built ${BUILD}` });
+    emit({ type: "step", step: "download", state: "skipped", detail: "Downloaded before" });
+    emit({ type: "step", step: "prepare", state: "done", detail: "Both halves run Tandem firmware" });
+    for (const side of ["right", "left"] as Side[]) {
+      emit({ type: "step", step: `flash-${side}`, state: "active", detail: side === "right" ? "Restarting into update mode through the left half" : "Restarting into update mode" });
+      await sleep(1000);
+      emit({ type: "update-port", side });
+      const answer = await until("grant-update-port", side);
+      emit({ type: "update-port-done", side });
+      await send(side, answer);
+    }
+    setDevices(devicesFor(devices.left, devices.right, ["left", "right"]));
+    emit({ type: "step", step: "verify", state: "done", detail: `Both halves run ${BUILD}` });
+    emit({ type: "done", build: BUILD, checked: true });
+  }
+
   async function play() {
     emit({ type: "step", step: "save", state: "skipped", detail: `No changes, using ${BUILD}` });
     emit({ type: "step", step: "build", state: "active", detail: "Building on GitHub" });
@@ -354,7 +379,7 @@ export function demoEngine(real: Engine): Engine {
       stopped = false;
       job = { id: `demo-${Date.now()}`, running: true, events: [] };
       emitLive({ type: "job", job });
-      play().catch((e: Error) => emit({ type: "error", message: e.message }));
+      (trust ? playTrust() : play()).catch((e: Error) => emit({ type: "error", message: e.message }));
       return { id: job.id };
     },
     cancel: async () => {

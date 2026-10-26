@@ -14,7 +14,7 @@ This is a prototype.
 4. Choose where your layout lives:
    - **A repo you have**, such as your fork of Kinesis's config. Tandem adds itself with one commit and keeps your keys as they are.
    - **A new repo.** Tandem creates one on your account from its [config template](https://github.com/itsthecsguy/tandem-config), starting from Kinesis's default layout or the one on your keyboard. It can be private.
-5. Run the one-time setup. GitHub builds the firmware. Then you press two keys on the left half and pick ADV360PRO in Chrome's list, and Tandem sends that half its firmware. The left half's new firmware restarts the right half for you, so for the right half you only pick its ADV360PRO. After that, an update is one click: the halves restart into update mode by themselves and Tandem sends the firmware over serial, with nothing to press or pick.
+5. Run the one-time setup. GitHub builds the firmware. Then you press two keys on the left half and pick ADV360PRO in Chrome's list, and Tandem sends that half its firmware. The left half's new firmware restarts the right half for you, so for the right half you only pick its ADV360PRO. After that, an update is one click: the halves restart into update mode by themselves and Tandem sends the firmware over serial, with nothing to press or pick. Chrome remembers each half's update port per browser profile, and the port only exists while the half is in update mode, so a browser that didn't do the setup, such as another computer or a new Incognito window, gets a one-minute "Trust this browser" step in onboarding: Tandem restarts each half, you connect its ADV360PRO, and it sends back the build it already runs.
 
 Safari and Firefox can't talk to the keyboard. They can still edit the layout and build firmware, and an update ends with both files to copy onto the halves by hand.
 
@@ -82,7 +82,7 @@ npm --prefix helper run typecheck
 
 The tests run the browser engine against an in-memory GitHub and a simulated keyboard, so they cover updates end to end.
 
-In dev, `?demo=walkthrough` plays a first-time setup from stock firmware that you click through, with no keyboard or GitHub involved. Add `&wrong=half` to have the first key combo land on the other half, or `&wrong=port` to have the first port pick be the wrong one. `?demo=intro` shows the setup screen before it starts. `?demo=` with `setup`, `firsttime`, `sending`, `port`, `portleft`, `retry`, `switched`, `auto`, `updateport`, `drive`, `byhand` or `done` freezes the update sheet at one moment, and `repo` or `install` shows onboarding screens. Demo mode never sends changes. See `src/lib/demo.ts`.
+In dev, `?demo=walkthrough` plays a first-time setup from stock firmware that you click through, with no keyboard or GitHub involved. Add `&wrong=half` to have the first key combo land on the other half, or `&wrong=port` to have the first port pick be the wrong one. `?demo=intro` shows the setup screen before it starts, and `?demo=trust` the step for a browser that hasn't updated the keyboard yet. `?demo=` with `setup`, `firsttime`, `sending`, `port`, `portleft`, `retry`, `switched`, `auto`, `updateport`, `drive`, `byhand` or `done` freezes the update sheet at one moment, and `repo` or `install` shows onboarding screens. Demo mode never sends changes. See `src/lib/demo.ts`.
 
 ## Deploy
 

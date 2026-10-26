@@ -2,7 +2,7 @@
 // go in localStorage, downloaded firmware in IndexedDB. Both fall back to
 // memory when the browser blocks storage, as some private windows do.
 
-import type { BuildRecord, BuildSettings, RepoRef } from "../../shared/types";
+import type { BuildRecord, BuildSettings, RepoRef, Side } from "../../shared/types";
 
 export interface SavedState {
   settings: BuildSettings;
@@ -200,4 +200,14 @@ export function loadRightBuild(): string | null {
 
 export function saveRightBuild(build: string) {
   write("tandem.rightBuild", build);
+}
+
+/** Halves whose update port this browser has sent firmware over. */
+export function loadUpdatePorts(): Side[] {
+  const text = read("tandem.updatePorts") ?? "";
+  return text.split(",").filter((s): s is Side => s === "left" || s === "right");
+}
+
+export function saveUpdatePorts(sides: Side[]) {
+  write("tandem.updatePorts", sides.join(",") || null);
 }

@@ -161,6 +161,12 @@ export interface DevicesStatus {
   unknownBootloaders: { volume: string; serial: string | null }[];
   /** The browser needs the user's OK before it can see a half's port. */
   needsAccess: boolean;
+  /**
+   * Browser only: halves whose update port this browser has sent firmware
+   * over, so Chrome won't ask about it again. Chrome can't say, and the port
+   * only exists in update mode, so Tandem keeps track itself.
+   */
+  updatePorts?: Side[];
   scannedAt: string;
 }
 

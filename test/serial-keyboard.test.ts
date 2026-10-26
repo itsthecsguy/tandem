@@ -173,6 +173,15 @@ describe("Web Serial keyboard", () => {
     expect(sending - entered).toBeGreaterThanOrEqual(240);
   });
 
+  it("remembers which halves' update ports this browser has sent firmware over", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowAll();
+    const { engine, access, events } = await setup(kb);
+    expect(access.devices().updatePorts).toEqual([]);
+    expect(await run(engine, events, kb)).toMatchObject({ type: "done", checked: true });
+    expect([...access.devices().updatePorts!].sort()).toEqual(["left", "right"]);
+  });
+
   it("asks once for each half's update port, then never again", async () => {
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
     kb.allowAll();
