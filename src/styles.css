@@ -6,7 +6,8 @@
   --border-strong: #d3d3ce;
   --text: #17171a;
   --text-2: #55555c;
-  --text-3: #9b9ba3;
+  /* The faintest text still meets 4.5:1 on --bg, --surface and --surface-2. */
+  --text-3: #6c6c74;
   --accent: #2f6bed;
   --accent-weak: #e9f0fe;
   --accent-ring: rgba(47, 107, 237, 0.35);
@@ -51,7 +52,7 @@
   --border-strong: #36363c;
   --text: #f2f2f4;
   --text-2: #a7a7af;
-  --text-3: #65656d;
+  --text-3: #84848c;
   --accent: #5b8dff;
   --accent-weak: rgba(91, 141, 255, 0.14);
   --accent-ring: rgba(91, 141, 255, 0.45);
