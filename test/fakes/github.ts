@@ -68,6 +68,8 @@ export class FakeGitHub {
   readonly cacheModes: string[] = [];
   /** Answers for the next branch lookups, like a browser serving them from its cache. */
   staleHeads: string[] = [];
+  /** Runs stay in progress after the upload, saving their cache, as on a repo's first build. */
+  savingCache = false;
   private blobs = new Map<string, Uint8Array>();
   private trees = new Map<string, Files>();
   private seq = 0;
@@ -239,9 +241,17 @@ export class FakeGitHub {
       if (!run) return this.notFound();
       if (!r[2]) return this.json(this.rawRun(owner, name, run));
       if (r[2] === "/jobs") {
-        return this.json({
-          jobs: ["Build (Legacy)", "Build (Clique)"].map((n) => ({ name: n, status: "completed", conclusion: "success", steps: [] })),
-        });
+        const done = (name: string, number: number) => ({ name, status: "completed", conclusion: "success", number });
+        const job = (name: string) =>
+          this.savingCache
+            ? {
+                name,
+                status: "in_progress",
+                conclusion: null,
+                steps: [done("West Build (left)", 10), done("Archive (Adv360)", 15), { name: "Post Cache west modules", status: "in_progress", conclusion: null, number: 16 }],
+              }
+            : { name, status: "completed", conclusion: "success", steps: [] };
+        return this.json({ jobs: ["Build (Legacy)", "Build (Clique)"].map(job) });
       }
       if (r[2] === "/artifacts") {
         return this.json({ artifacts: run.artifacts.map((a) => ({ id: a.id, name: a.name, size_in_bytes: a.zip.length, expired: false })) });
@@ -271,8 +281,8 @@ export class FakeGitHub {
   private rawRun(owner: string, name: string, run: Run) {
     return {
       id: run.id,
-      status: "completed",
-      conclusion: "success",
+      status: this.savingCache ? "in_progress" : "completed",
+      conclusion: this.savingCache ? null : "success",
       html_url: `https://github.com/${owner}/${name}/actions/runs/${run.id}`,
       head_sha: run.sha,
       event: run.event,

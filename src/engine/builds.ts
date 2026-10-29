@@ -1,6 +1,6 @@
 // Firmware builds run in the user's GitHub Actions. Tandem finds the run for a
 // commit, follows the job for the firmware variant it wants, and downloads
-// that job's artifact as soon as the job finishes. Downloads are kept in
+// that job's artifact as soon as the job has uploaded it. Downloads are kept in
 // IndexedDB, so updating to a build already downloaded skips GitHub.
 
 import { unzipSync } from "fflate";
@@ -36,6 +36,12 @@ function describe(job: RunJob | undefined): string {
   const step = job.steps?.find((s) => s.status === "in_progress");
   return step ? `On GitHub: ${step.name}` : "Running on GitHub";
 }
+
+// After the upload, the job saves the west cache. On a repo's first build that
+// takes about 90 seconds, and the firmware doesn't need it. Kinesis's workflow
+// calls the upload step "Archive (Adv360)".
+const uploaded = (job: RunJob) =>
+  !!job.steps?.some((s) => /^archive\b/i.test(s.name) && s.status === "completed" && s.conclusion === "success");
 
 const isUf2 = (data: Uint8Array) => new TextDecoder().decode(data.subarray(0, 4)) === "UF2\n";
 
@@ -90,6 +96,7 @@ export async function cloudBuild(
     signal.throwIfAborted();
     const jobs = await gh.jobs(owner, name, run.id);
     const job = jobs.find((j) => want.job.test(j.name));
+    if (job && uploaded(job)) break;
     if (job?.status === "completed" || (!job && run.status === "completed")) {
       const conclusion = job ? job.conclusion : run.conclusion;
       if (conclusion !== "success") throw new Error(`The firmware build failed on GitHub (${conclusion}). Open the run to see why.`);
