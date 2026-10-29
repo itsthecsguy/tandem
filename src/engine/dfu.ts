@@ -20,18 +20,14 @@ const MODE_APPLICATION = 4;
 const PIECE = 512;
 
 export interface DfuTiming {
-  /** How long the bootloader takes to erase one 4 KB flash page. */
+  /** The longest the bootloader takes to erase one 4 KB flash page. */
   pageEraseMs: number;
-  /** How long it takes to write one, which the sender waits out every 8 pieces. */
-  pageWriteMs: number;
-  /** How long to wait for each acknowledgement. */
+  /** How long to wait for each acknowledgement, on top of any erasing. */
   ackMs: number;
-  /** The shortest wait for erasing, however small the image. */
-  minEraseMs: number;
 }
 
-// The same figures adafruit-nrfutil uses.
-export const DFU_TIMING: DfuTiming = { pageEraseMs: 89.7, pageWriteMs: 102.4, ackMs: 3000, minEraseMs: 500 };
+// adafruit-nrfutil's figure for erasing. An Advantage360 Pro takes about 86 ms a page.
+export const DFU_TIMING: DfuTiming = { pageEraseMs: 89.7, ackMs: 3000 };
 
 /** CRC-16/CCITT starting at 0xFFFF, as the bootloader computes it. */
 export function crc16(data: Uint8Array | number[], crc = 0xffff): number {
@@ -163,25 +159,26 @@ export async function dfuFlash(port: PortLike, image: Uint8Array, onProgress?: (
       frames = new Frames(port.readable!.getReader());
       const writer = port.writable!.getWriter();
       let seq = 0;
-      const send = async (payload: number[]) => {
+      const send = async (payload: number[], ms = timing.ackMs) => {
         seq = (seq + 1) % 8;
         await writer.write(frame(seq, payload));
-        await frames!.next(timing.ackMs);
+        await frames!.next(ms);
       };
 
       try {
         await send([...u32(START_PACKET), ...u32(MODE_APPLICATION), ...u32(0), ...u32(0), ...u32(image.length)]);
-        // The bootloader erases the application area before it takes data.
-        await sleep(Math.max(timing.minEraseMs, (Math.floor(image.length / 4096) + 1) * timing.pageEraseMs));
-        await send([...u32(INIT_PACKET), ...initPacket(image), 0, 0]);
+        // The bootloader erases the application area, then answers the init packet.
+        const pages = Math.floor(image.length / 4096) + 1;
+        await send([...u32(INIT_PACKET), ...initPacket(image), 0, 0], timing.ackMs + pages * timing.pageEraseMs);
 
+        // The bootloader answers each piece once it has taken it: about 5 ms,
+        // and 45 more for every 8th, while it writes a 4 KB page. So unlike
+        // adafruit-nrfutil, Tandem doesn't sleep between pieces.
         const pieces = Math.ceil(image.length / PIECE);
         for (let i = 0; i < pieces; i++) {
           await send([...u32(DATA_PACKET), ...image.subarray(i * PIECE, (i + 1) * PIECE)]);
           onProgress?.((i + 1) / pieces);
-          if (i % 8 === 0) await sleep(timing.pageWriteMs);
         }
-        await sleep(timing.pageWriteMs);
         await send(u32(STOP_PACKET));
       } finally {
         writer.releaseLock();

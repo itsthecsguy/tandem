@@ -32,7 +32,7 @@ const TIMING = {
   bootMs: 100,
   settleMs: 0,
   relayMs: 300,
-  dfu: { pageEraseMs: 0, pageWriteMs: 0, ackMs: 300, minEraseMs: 0 },
+  dfu: { pageEraseMs: 0, ackMs: 300 },
 };
 
 let github: FakeGitHub;
