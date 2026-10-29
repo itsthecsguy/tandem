@@ -28,6 +28,7 @@ describe("the config template", () => {
 
   it("bundles every file of the firmware module", () => {
     expect(MODULE_FILES.map((f) => f.path)).toContain("tandem/zmk-tandem/src/autoflash.c");
+    expect(MODULE_FILES.map((f) => f.path)).toContain("tandem/zmk-tandem/src/reconnect.c");
     expect(MODULE_FILES.map((f) => f.path)).toContain("tandem/zmk-tandem/zephyr/module.yml");
   });
 

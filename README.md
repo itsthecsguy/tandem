@@ -36,6 +36,8 @@ Tandem has no accounts of its own, no database and no analytics. The GitHub toke
 
 **Updates without key presses.** The firmware module adds a small USB serial port to each half. Opening it at 1200 baud restarts that half into its UF2 bootloader, the same thing `&bootloader` does. Writing `info` returns one JSON line with the half's role, build ID and repo. Writing `keymap` returns the keymap file the firmware was built from, which the module embeds at build time. On the left half, `info` also says whether the right half is connected, and writing `boot right` makes the left half run `&bootloader` on the right half over the split link, so Tandem never needs a port of the right half's own.
 
+**Every paired computer reconnects.** ZMK advertises only while the active profile's computer is away. Pair a laptop on profile 1 and a tablet on profile 2, switch to the tablet, and the laptop can't reconnect after it drops, say when you carry it out of range, until you switch back. At boot, whichever connects first can lock the other out the same way. ZMK also gives up if the radio refuses to start advertising. So the left half checks every 5 seconds, and 1 second after a computer disconnects, and advertises whenever a paired computer is away. It costs the same power as ZMK's own advertising while the active computer is away, so clear profiles you no longer use.
+
 The commit that adds Tandem to an existing repo changes:
 
 - `tandem/zmk-tandem/`: the firmware module
