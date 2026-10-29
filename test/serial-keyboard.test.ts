@@ -39,12 +39,19 @@ let github: FakeGitHub;
 let restore: () => void;
 
 beforeEach(() => {
+  // Everything here waits on fakes, so jump to the next timer instead of
+  // sitting through it. Date.now() moves with the jumps.
+  vi.useFakeTimers();
+  vi.setTimerTickMode("nextTimerAsync");
   github = new FakeGitHub();
   restore = github.install();
   github.addRepo("octocat", "adv360", tandemRepo());
 });
 
-afterEach(() => restore());
+afterEach(() => {
+  restore();
+  vi.useRealTimers();
+});
 
 async function setup(kb: FakeKeyboard, pick?: () => DriveLike, savedDrive?: DriveLike, timing: Partial<typeof TIMING> = {}) {
   vi.resetModules();
