@@ -5,7 +5,7 @@
 import { GitHubApi, GitHubError } from "../../shared/github";
 import { keepSpelling, parseKeymap, toKeymap, writeKeymap } from "../../shared/keymap";
 import { readLayout } from "../../shared/layout";
-import { KEYMAP_PATH, WORKFLOW_PATH, setupPlan } from "../../shared/setup";
+import { KEYMAP_PATH, MANIFEST_PATH, WORKFLOW_PATH, setupPlan } from "../../shared/setup";
 import type { AppState, Keymap, LayoutKey, RepoOption, RepoRef, Session, SetupStatus } from "../../shared/types";
 import { getToken, ghCliToken, missingScopes, oauthConfig, signOut as dropToken } from "./auth";
 import { MODULE_FILES } from "./module";
@@ -30,13 +30,14 @@ const repoUrl = (r: RepoRef) => `https://github.com/${r.owner}/${r.name}/tree/${
 let setupCache: { key: string; status: SetupStatus } | null = null;
 
 async function readRepoFiles(gh: GitHubApi, repo: RepoRef, ref: string) {
-  const [workflow, keymap, info, ...module] = await Promise.all([
+  const [workflow, manifest, keymap, info, ...module] = await Promise.all([
     gh.file(repo.owner, repo.name, WORKFLOW_PATH, ref),
+    gh.file(repo.owner, repo.name, MANIFEST_PATH, ref),
     gh.file(repo.owner, repo.name, KEYMAP_PATH, ref),
     gh.file(repo.owner, repo.name, "config/info.json", ref),
     ...MODULE_FILES.map((f) => gh.file(repo.owner, repo.name, f.path, ref)),
   ]);
-  return { workflow, keymap, info, module: new Map(MODULE_FILES.map((f, i) => [f.path, module[i]])) };
+  return { workflow, manifest, keymap, info, module: new Map(MODULE_FILES.map((f, i) => [f.path, module[i]])) };
 }
 
 let whoCache: { token: string; login: string; scopes: string[] } | null = null;

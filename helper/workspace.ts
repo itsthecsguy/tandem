@@ -13,7 +13,7 @@ import { CLIENT_ID, GitHub, REQUIRED_SCOPES, forgetToken, getToken, ghCliToken, 
 import { keepSpelling, parseKeymap, toKeymap, writeKeymap } from "../shared/keymap";
 import { readLayout } from "../shared/layout";
 import { type NewRepoOptions, createRepo } from "./newrepo";
-import { KEYMAP_PATH, WORKFLOW_PATH, moduleFiles, setupPlan } from "./setup";
+import { KEYMAP_PATH, MANIFEST_PATH, WORKFLOW_PATH, moduleFiles, setupPlan } from "./setup";
 
 export const APP_DIR = process.env.TANDEM_HOME ?? join(homedir(), "Library", "Application Support", "Tandem");
 export const WORKSPACE_DIR = join(APP_DIR, "workspace");
@@ -83,13 +83,14 @@ let setupCache: { key: string; status: SetupStatus } | null = null;
 
 async function readRepoFiles(gh: GitHub, repo: RepoRef, ref: string) {
   const mine = await moduleFiles();
-  const [workflow, keymap, info, ...module] = await Promise.all([
+  const [workflow, manifest, keymap, info, ...module] = await Promise.all([
     gh.file(repo.owner, repo.name, WORKFLOW_PATH, ref),
+    gh.file(repo.owner, repo.name, MANIFEST_PATH, ref),
     gh.file(repo.owner, repo.name, KEYMAP_PATH, ref),
     gh.file(repo.owner, repo.name, "config/info.json", ref),
     ...mine.map((f) => gh.file(repo.owner, repo.name, f.path, ref)),
   ]);
-  return { workflow, keymap, info, module: new Map(mine.map((f, i) => [f.path, module[i]])) };
+  return { workflow, manifest, keymap, info, module: new Map(mine.map((f, i) => [f.path, module[i]])) };
 }
 
 let ghLoginCache: { login: string | null; at: number } | null = null;

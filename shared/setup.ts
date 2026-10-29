@@ -1,7 +1,10 @@
 // The one commit that adds Tandem to a keyboard config repo:
 //   tandem/zmk-tandem/   the firmware module
 //   build workflow       every `west build` also builds the module, with the
-//                        commit's short SHA as the build ID the halves report
+//                        commit's short SHA as the build ID the halves report.
+//                        `west update` makes shallow clones, cached under a
+//                        key of Tandem's own.
+//   west manifest        fetches only the modules the firmware builds from
 //   keymap               a global &lt quick-tap override becomes Tandem's &ltr
 //
 // The browser and the helper both use this. Each passes in the module's files,
@@ -14,7 +17,30 @@ import type { SetupStatus } from "./types";
 export const MODULE_PATH = "tandem/zmk-tandem";
 export const WORKFLOW_PATH = ".github/workflows/build.yml";
 export const KEYMAP_PATH = "config/adv360.keymap";
+export const MANIFEST_PATH = "config/west.yml";
 const BUILD_ID_CONF = "tandem/build-id.conf";
+
+// Kinesis's `west update` clones every module with its whole history, and the
+// cache of that passes 2 GB, which takes half a minute to restore on every
+// build. Shallow clones of the modules below make it about 240 MB.
+const WEST_UPDATE = "west update";
+const SHALLOW_UPDATE = "west update --narrow -o=--depth=1";
+
+// Tandem's caches get their own key, so no build restores the full clones
+// Kinesis's workflow cached before, which would then be saved again.
+const CACHE_KEY = "${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('config/west.yml') }}";
+const TANDEM_CACHE_KEY = "${{ runner.os }}-build-${{ env.cache-name }}-tandem-${{ hashFiles('config/west.yml') }}";
+const RESTORE_KEYS = ["${{ runner.os }}-build-${{ env.cache-name }}-", "${{ runner.os }}-build-", "${{ runner.os }}-"];
+const TANDEM_RESTORE_KEY = "${{ runner.os }}-build-${{ env.cache-name }}-tandem-";
+
+// The modules the Advantage360 Pro's firmware builds from, out of the dozens
+// Zephyr lists. With these alone a first build's `west update` takes 13
+// seconds instead of 140, and the firmware comes out byte for byte the same,
+// apart from the date and commit Kinesis's version macro types. Checked
+// against one ZMK revision only: another may need other modules, so its
+// manifest stays as Kinesis wrote it.
+const CHECKED_ZMK = "adv360-z3.5-2";
+const MODULES = ["zephyr", "cmsis", "hal_nordic", "tinycrypt", "lvgl", "segger", "nanopb", "zmk-studio-messages"];
 
 const BUILD_FLAGS = [
   `-DZMK_EXTRA_MODULES="\${GITHUB_WORKSPACE}/${MODULE_PATH}"`,
@@ -38,7 +64,19 @@ export function unpatchWorkflow(text: string): string {
       while (i + 1 < lines.length && /^\s*\S/.test(lines[i + 1]) && /^(\s*)/.exec(lines[i + 1])![1].length > indent) i++;
       continue;
     }
-    out.push(lines[i].replace(/ -DZMK_EXTRA_MODULES="\$\{GITHUB_WORKSPACE\}\/tandem\/zmk-tandem".*?build-id\.conf"/, ""));
+    const restore = /^(\s*)restore-keys: \|\s*$/.exec(lines[i]);
+    if (restore && lines[i + 1]?.trim() === TANDEM_RESTORE_KEY) {
+      const indent = /^(\s*)/.exec(lines[i + 1])![1];
+      out.push(lines[i], ...RESTORE_KEYS.map((k) => indent + k));
+      i++;
+      continue;
+    }
+    out.push(
+      lines[i]
+        .replace(/ -DZMK_EXTRA_MODULES="\$\{GITHUB_WORKSPACE\}\/tandem\/zmk-tandem".*?build-id\.conf"/, "")
+        .replace(new RegExp(`^(\\s*run: )${SHALLOW_UPDATE}\\s*$`), `$1${WEST_UPDATE}`)
+        .replace(`key: ${TANDEM_CACHE_KEY}`, `key: ${CACHE_KEY}`),
+    );
   }
   return out.join("\n");
 }
@@ -55,7 +93,8 @@ export function patchWorkflow(original: string): string | null {
   let builds = 0;
   let idSteps = 0;
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     // Write the build ID and repo right before each job restores its west cache.
     const cache = /^(\s*)- name: Cache west modules\s*$/.exec(line);
     if (cache) {
@@ -75,14 +114,50 @@ export function patchWorkflow(original: string): string | null {
       builds++;
       continue;
     }
+
+    const update = new RegExp(`^(\\s*run: )${WEST_UPDATE}\\s*$`).exec(line);
+    if (update) {
+      out.push(update[1] + SHALLOW_UPDATE);
+      continue;
+    }
+    if (line.trim() === `key: ${CACHE_KEY}`) {
+      out.push(line.replace(CACHE_KEY, TANDEM_CACHE_KEY));
+      continue;
+    }
+    // Only Kinesis's three restore keys, all of which would match an old cache.
+    if (/^\s*restore-keys: \|\s*$/.test(line) && RESTORE_KEYS.every((k, j) => lines[i + 1 + j]?.trim() === k)) {
+      out.push(line, /^(\s*)/.exec(lines[i + 1])![1] + TANDEM_RESTORE_KEY);
+      i += RESTORE_KEYS.length;
+      continue;
+    }
     out.push(line);
   }
 
   return builds > 0 && idSteps > 0 ? out.join("\n") : null;
 }
 
+/** Puts the west manifest's ZMK import back the way Kinesis wrote it. */
+export function unpatchManifest(text: string): string {
+  return text.replace(/^( *)import:\n\1  file: app\/west\.yml\n\1  name-allowlist:(?:\n\1    - [\w-]+)+$/m, "$1import: app/west.yml");
+}
+
+/**
+ * Has the west manifest fetch only the modules the firmware builds from, for
+ * the ZMK revision that list was checked against. Any other manifest comes
+ * back as Kinesis wrote it, without an allowlist from an older Tandem.
+ */
+export function patchManifest(original: string): string {
+  const text = unpatchManifest(original);
+  const zmkImport = /^( *)import: app\/west\.yml$/gm;
+  if (!new RegExp(`^\\s*revision: ${CHECKED_ZMK}\\s*$`, "m").test(text) || text.match(zmkImport)?.length !== 1) return text;
+  return text.replace(zmkImport, (_, indent: string) =>
+    [`${indent}import:`, `${indent}  file: app/west.yml`, `${indent}  name-allowlist:`, ...MODULES.map((m) => `${indent}    - ${m}`)].join("\n"),
+  );
+}
+
 export interface RepoFiles {
   workflow: string | null;
+  manifest: string | null;
   keymap: string | null;
   info: string | null;
   module: Map<string, string | null>;
@@ -115,6 +190,16 @@ export function setupPlan(repo: RepoFiles, mine: RepoFile[]): { status: SetupSta
     }
   }
 
+  // Builds work either way, so a manifest Tandem can't patch is no blocker.
+  let manifestChanged = false;
+  if (repo.manifest) {
+    const patched = patchManifest(repo.manifest);
+    if (patched !== repo.manifest) {
+      files.push({ path: MANIFEST_PATH, content: patched });
+      manifestChanged = true;
+    }
+  }
+
   if (repo.keymap && repo.info) {
     const { rows } = readLayout(repo.info);
     const { text } = importKeymap(repo.keymap, rows);
@@ -125,8 +210,8 @@ export function setupPlan(repo: RepoFiles, mine: RepoFile[]): { status: SetupSta
   const present = [...repo.module.values()].some((v) => v !== null) || !!repo.workflow?.includes(MODULE_PATH);
   return {
     status: {
-      installed: present && !moduleChanged && !workflowChanged,
-      outdated: present && (moduleChanged || workflowChanged),
+      installed: present && !moduleChanged && !workflowChanged && !manifestChanged,
+      outdated: present && (moduleChanged || workflowChanged || manifestChanged),
       changes: files.map((f) => f.path),
       blocker,
     },
