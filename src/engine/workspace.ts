@@ -5,7 +5,7 @@
 import { GitHubApi, GitHubError } from "../../shared/github";
 import { keepSpelling, parseKeymap, toKeymap, writeKeymap } from "../../shared/keymap";
 import { readLayout } from "../../shared/layout";
-import { KEYMAP_PATH, MANIFEST_PATH, WORKFLOW_PATH, setupPlan } from "../../shared/setup";
+import { KEYMAP_PATH, MANIFEST_PATH, WORKFLOW_PATH, setupMessage, setupPlan } from "../../shared/setup";
 import type { AppState, Keymap, LayoutKey, RepoOption, RepoRef, Session, SetupStatus } from "../../shared/types";
 import { getToken, ghCliToken, missingScopes, oauthConfig, signOut as dropToken } from "./auth";
 import { MODULE_FILES } from "./module";
@@ -152,6 +152,19 @@ export function disconnectRepo() {
 
 /** Makes the setup commit on the connected branch. */
 export async function installTandem(): Promise<string> {
+  return (await commitSetup(false))!;
+}
+
+/**
+ * Commits a newer Tandem when the branch has an older one, so a keyboard
+ * update installs it. Returns the new head, or null if there's no update or
+ * the branch can't take it.
+ */
+export async function updateTandem(): Promise<string | null> {
+  return commitSetup(true);
+}
+
+async function commitSetup(onlyUpdate: boolean): Promise<string | null> {
   const gh = await github();
   const repo = connectedRepo();
   // If the branch moves while Tandem commits, plan again from its new head.
@@ -159,19 +172,13 @@ export async function installTandem(): Promise<string> {
   for (let attempt = 0; ; attempt++) {
     const head = await gh.head(repo.owner, repo.name, repo.branch);
     const { status, files } = setupPlan(await readRepoFiles(gh, repo, head), MODULE_FILES);
+    if (onlyUpdate && (!status.outdated || status.blocker)) return null;
     if (status.blocker) throw new Error(status.blocker);
     setupCache = null;
     workspace = null;
     if (!files.length) return head;
     try {
-      return await gh.commit(
-        repo.owner,
-        repo.name,
-        repo.branch,
-        head,
-        files,
-        "Add Tandem automatic updates\n\nAdds the zmk-tandem firmware module, builds it in every firmware build, and\nmoves the keymap's repeat-on-tap-then-hold keys to Tandem's &ltr behavior.",
-      );
+      return await gh.commit(repo.owner, repo.name, repo.branch, head, files, setupMessage(status));
     } catch (err) {
       if (attempt > 0 || !(err instanceof GitHubError && err.status === 422)) throw err;
     } finally {

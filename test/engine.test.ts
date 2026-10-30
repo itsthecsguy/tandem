@@ -209,6 +209,56 @@ describe("browser engine", () => {
     await until(() => events.find((x) => x.type === "done"));
   });
 
+  it("commits a newer Tandem on top of the layout before building", async () => {
+    const files = tandemRepo();
+    files["tandem/zmk-tandem/src/reconnect.c"] = "// an older version\n";
+    fake.addRepo("octocat", "adv360", files);
+    const e = await engine();
+    const s = await e.connect({ owner: "octocat", name: "adv360", branch: "main" });
+    expect(s.setup).toMatchObject({ outdated: true, changes: ["tandem/zmk-tandem/src/reconnect.c"] });
+    const events = record(e);
+
+    const { keymap } = await e.state();
+    keymap.layers[0].bindings[15] = "&ltr 2 Q";
+    await e.update(keymap);
+    await until(() => events.find((x) => x.type === "manual-flash"));
+
+    const head = fake.head("octocat", "adv360");
+    const commit = fake.commits.get(head)!;
+    expect(commit.message).toMatch(/^Update Tandem\n/);
+    expect(fake.commits.get(commit.parents[0])!.message).toBe("Update layout with Tandem");
+    expect(fake.fileAt(head, "tandem/zmk-tandem/src/reconnect.c")).toBe(MODULE_FILES.find((f) => f.path.endsWith("reconnect.c"))!.content);
+    expect(parseKeymap(fake.fileAt(head, "config/adv360.keymap")!).layers[0].bindings[15]).toBe("&ltr 2 Q");
+    expect(events).toContainEqual({ type: "step", step: "save", state: "done", detail: `Committed your layout and Tandem's update, ${head.slice(0, 7)}` });
+
+    await e.act({ type: "manual-flash-done" });
+    expect(await until(() => events.find((x) => x.type === "done"))).toEqual({ type: "done", build: head.slice(0, 7), checked: false });
+    expect((await e.session()).setup).toMatchObject({ installed: true, outdated: false });
+  });
+
+  it("still updates the keyboard when the branch can't take a newer Tandem", async () => {
+    const files = tandemRepo();
+    files["tandem/zmk-tandem/src/reconnect.c"] = "// an older version\n";
+    files[".github/workflows/build.yml"] = "name: Build\non: push\n";
+    fake.addRepo("octocat", "adv360", files);
+    const e = await engine();
+    const s = await e.connect({ owner: "octocat", name: "adv360", branch: "main" });
+    expect(s.setup).toMatchObject({ outdated: true, blocker: expect.stringMatching(/isn't Kinesis's/) });
+    const events = record(e);
+
+    const { keymap } = await e.state();
+    keymap.layers[0].bindings[15] = "&ltr 2 Q";
+    await e.update(keymap);
+    await until(() => events.find((x) => x.type === "manual-flash"));
+
+    const head = fake.head("octocat", "adv360");
+    expect(fake.commits.get(head)!.message).toBe("Update layout with Tandem");
+    expect(fake.fileAt(head, "tandem/zmk-tandem/src/reconnect.c")).toBe("// an older version\n");
+    expect(events).toContainEqual({ type: "step", step: "save", state: "done", detail: `Committed ${head.slice(0, 7)}` });
+    await e.act({ type: "manual-flash-done" });
+    await until(() => events.find((x) => x.type === "done"));
+  });
+
   it("says an update stopped when the page reloaded part way", async () => {
     // sessionStorage outlives a reload; module state doesn't.
     const tab = new Map<string, string>();

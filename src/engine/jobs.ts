@@ -1,11 +1,11 @@
-// An update in the browser: commit the layout, build it on GitHub, then put it
-// on the keyboard. How it gets onto the keyboard depends on what this browser
-// can do, so the engine passes that step in.
+// An update in the browser: commit the layout and any newer Tandem, build it
+// on GitHub, then put it on the keyboard. How it gets onto the keyboard
+// depends on what this browser can do, so the engine passes that step in.
 
 import type { JobEvent, JobSnapshot, Keymap } from "../../shared/types";
 import { type Build, cachedBuild, cloudBuild } from "./builds";
 import { loadJob, loadState, saveJob, saveState } from "./store";
-import { connectedRepo, github, openWorkspace, saveKeymap } from "./workspace";
+import { connectedRepo, github, openWorkspace, saveKeymap, updateTandem } from "./workspace";
 
 export type Emit = (e: JobEvent) => void;
 
@@ -66,16 +66,17 @@ export function startUpdate(
   (async () => {
     try {
       emit({ type: "step", step: "save", state: "active", detail: "Committing to GitHub" });
-      let sha: string;
       const saved = keymap ? await saveKeymap(keymap) : null;
-      if (saved?.committed) {
-        sha = saved.sha;
+      let sha = saved ? saved.sha : (await openWorkspace(true)).sha;
+      // After the layout, so the update plans from the keymap just committed.
+      const updated = await updateTandem();
+      if (updated) {
+        sha = updated;
+        const what = saved?.committed ? "your layout and Tandem's update" : "Tandem's update";
+        emit({ type: "step", step: "save", state: "done", detail: `Committed ${what}, ${sha.slice(0, 7)}` });
+      } else if (saved?.committed) {
         emit({ type: "step", step: "save", state: "done", detail: `Committed ${sha.slice(0, 7)}` });
-      } else if (saved) {
-        sha = saved.sha;
-        emit({ type: "step", step: "save", state: "skipped", detail: `No changes, using ${sha.slice(0, 7)}` });
       } else {
-        sha = (await openWorkspace(true)).sha;
         emit({ type: "step", step: "save", state: "skipped", detail: `No changes, using ${sha.slice(0, 7)}` });
       }
 

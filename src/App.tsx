@@ -106,6 +106,11 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
   useEffect(() => {
     if (view?.done) load();
   }, [view?.done, load]);
+  // An update commits any newer Tandem, which takes its banner away.
+  const outdated = !!session.setup?.outdated;
+  useEffect(() => {
+    if (outdated && job && !job.running) api.session().then(onSession, () => {});
+  }, [outdated, job?.id, job?.running, onSession]);
 
   const activators = useMemo(() => (draft ? layerActivators(draft) : []), [draft]);
 
@@ -316,8 +321,8 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
       {session.setup?.outdated && (
         <div className="banner">
           <span>
-            <strong>A newer version of Tandem is ready for your repo.</strong> Updating makes one commit, then the next keyboard update
-            installs it with no key presses.
+            <strong>A newer version of Tandem is ready for your repo.</strong> The next keyboard update commits it to your repo and
+            installs it, with no key presses.
           </span>
           <button
             type="button"
@@ -335,7 +340,7 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
               }
             }}
           >
-            {installing ? "Committing…" : "Update Tandem"}
+            {installing ? "Committing…" : "Commit now"}
           </button>
         </div>
       )}

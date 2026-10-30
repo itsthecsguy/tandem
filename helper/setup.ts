@@ -5,7 +5,7 @@ import { join, relative, resolve } from "node:path";
 
 import { MODULE_PATH, type RepoFile, type RepoFiles, setupPlan as plan } from "../shared/setup";
 
-export { KEYMAP_PATH, MANIFEST_PATH, MODULE_PATH, WORKFLOW_PATH, patchWorkflow, unpatchWorkflow } from "../shared/setup";
+export { KEYMAP_PATH, MANIFEST_PATH, MODULE_PATH, WORKFLOW_PATH, patchWorkflow, setupMessage, unpatchWorkflow } from "../shared/setup";
 
 /** The module in this repo's config template, which setup copies into other repos. */
 export const MODULE_DIR = resolve(import.meta.dirname, "..", "template", MODULE_PATH);

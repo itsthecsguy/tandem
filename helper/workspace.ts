@@ -13,7 +13,7 @@ import { CLIENT_ID, GitHub, REQUIRED_SCOPES, forgetToken, getToken, ghCliToken, 
 import { keepSpelling, parseKeymap, toKeymap, writeKeymap } from "../shared/keymap";
 import { readLayout } from "../shared/layout";
 import { type NewRepoOptions, createRepo } from "./newrepo";
-import { KEYMAP_PATH, MANIFEST_PATH, WORKFLOW_PATH, moduleFiles, setupPlan } from "./setup";
+import { KEYMAP_PATH, MANIFEST_PATH, WORKFLOW_PATH, moduleFiles, setupMessage, setupPlan } from "./setup";
 
 export const APP_DIR = process.env.TANDEM_HOME ?? join(homedir(), "Library", "Application Support", "Tandem");
 export const WORKSPACE_DIR = join(APP_DIR, "workspace");
@@ -202,20 +202,27 @@ export async function createNewRepo(options: NewRepoOptions): Promise<RepoRef> {
 
 /** Makes the setup commit on the connected branch. */
 export async function installTandem(): Promise<string> {
+  return (await commitSetup(false))!;
+}
+
+/**
+ * Commits a newer Tandem when the branch has an older one, so a keyboard
+ * update installs it. Returns the new head, or null if there's no update or
+ * the branch can't take it.
+ */
+export async function updateTandem(): Promise<string | null> {
+  return commitSetup(true);
+}
+
+async function commitSetup(onlyUpdate: boolean): Promise<string | null> {
   const gh = await github();
   const repo = await connectedRepo();
   const head = await gh.head(repo.owner, repo.name, repo.branch);
   const { status, files } = await setupPlan(await readRepoFiles(gh, repo, head));
+  if (onlyUpdate && (!status.outdated || status.blocker)) return null;
   if (status.blocker) throw new Error(status.blocker);
   if (!files.length) return head;
-  const sha = await gh.commit(
-    repo.owner,
-    repo.name,
-    repo.branch,
-    head,
-    files,
-    "Add Tandem automatic updates\n\nAdds the zmk-tandem firmware module, builds it in every firmware build, and\nmoves the keymap's repeat-on-tap-then-hold keys to Tandem's &ltr behavior.",
-  );
+  const sha = await gh.commit(repo.owner, repo.name, repo.branch, head, files, setupMessage(status));
   setupCache = null;
   await syncWorkspace(true);
   return sha;

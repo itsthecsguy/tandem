@@ -1,7 +1,7 @@
 import type { JobEvent, JobSnapshot, Keymap } from "../shared/types";
 import { cachedBuild, cloudBuild } from "./cloud";
 import { flashKeyboard } from "./flasher";
-import { loadState, saveKeymap, saveState, syncWorkspace } from "./workspace";
+import { loadState, saveKeymap, saveState, syncWorkspace, updateTandem } from "./workspace";
 
 type Listener = (e: JobEvent) => void;
 
@@ -43,7 +43,7 @@ export function cancelJob() {
   current?.abort.abort(new Error("Cancelled"));
 }
 
-/** Commit the layout, build it on GitHub, then flash both halves. */
+/** Commit the layout and any newer Tandem, build it on GitHub, then flash both halves. */
 export function startUpdate(keymap?: Keymap): Job {
   if (current?.running) throw new Error("An update is already running");
   const job = new Job();
@@ -58,14 +58,19 @@ export function startUpdate(keymap?: Keymap): Job {
       const saved = keymap ? await saveKeymap(keymap) : null;
       if (saved) {
         sha = saved.sha;
-        emit(
-          saved.committed
-            ? { type: "step", step: "save", state: "done", detail: `Committed ${sha.slice(0, 7)}` }
-            : { type: "step", step: "save", state: "skipped", detail: `No changes, using ${sha.slice(0, 7)}` },
-        );
       } else {
         await syncWorkspace(true);
         sha = (await loadState()).syncedSha!;
+      }
+      // After the layout, so the update plans from the keymap just committed.
+      const updated = await updateTandem();
+      if (updated) {
+        sha = updated;
+        const what = saved?.committed ? "your layout and Tandem's update" : "Tandem's update";
+        emit({ type: "step", step: "save", state: "done", detail: `Committed ${what}, ${sha.slice(0, 7)}` });
+      } else if (saved?.committed) {
+        emit({ type: "step", step: "save", state: "done", detail: `Committed ${sha.slice(0, 7)}` });
+      } else {
         emit({ type: "step", step: "save", state: "skipped", detail: `No changes, using ${sha.slice(0, 7)}` });
       }
 

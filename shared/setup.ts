@@ -218,3 +218,10 @@ export function setupPlan(repo: RepoFiles, mine: RepoFile[]): { status: SetupSta
     files,
   };
 }
+
+/** The setup commit's message, for adding Tandem or replacing an older version. */
+export function setupMessage(status: SetupStatus): string {
+  return status.outdated
+    ? "Update Tandem\n\nReplaces the zmk-tandem firmware module, and Tandem's changes to the build\nand keymap, with the latest version."
+    : "Add Tandem automatic updates\n\nAdds the zmk-tandem firmware module, builds it in every firmware build, and\nmoves the keymap's repeat-on-tap-then-hold keys to Tandem's &ltr behavior.";
+}

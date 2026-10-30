@@ -44,6 +44,8 @@ The commit that adds Tandem to an existing repo changes:
 - `.github/workflows/build.yml`: every `west build` includes the module, tagged with the commit's short SHA and the repo's name. A newer Tandem replaces an older version of these changes instead of adding a second copy.
 - `config/adv360.keymap`: Tandem's repeat behaviors, plus any keys that already repeat on tap-then-hold switched over to them
 
+When the site has a newer Tandem than your repo, the next keyboard update commits it on top of your layout before it builds. Kinesis's and ZMK's own changes reach your repo only when you sync your fork.
+
 ## Reading the layout from the keyboard
 
 Starting a new repo can use the layout that's on the keyboard now, so people who customized it with Kinesis's Clique app, and never had a repo, keep it.

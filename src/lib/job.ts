@@ -3,7 +3,7 @@ import type { JobSnapshot, Side, StepId, StepState } from "../../shared/types";
 export const STEP_ORDER: StepId[] = ["save", "build", "download", "prepare", "flash-right", "flash-left", "verify"];
 
 export const STEP_TITLES: Record<StepId, string> = {
-  save: "Commit layout",
+  save: "Commit changes",
   build: "Build on GitHub",
   download: "Download firmware",
   prepare: "Find both halves",
