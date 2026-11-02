@@ -13,6 +13,8 @@ export interface SavedState {
   onboarded: boolean;
   /** In development, sign in with the GitHub CLI's login. */
   useGh: boolean;
+  /** The branch the ZMK 4.1 trial started from. */
+  betaFrom: string | null;
 }
 
 const DEFAULT_STATE: SavedState = {
@@ -22,6 +24,7 @@ const DEFAULT_STATE: SavedState = {
   syncedSha: null,
   onboarded: false,
   useGh: false,
+  betaFrom: null,
 };
 
 const STATE_KEY = "tandem.state";
@@ -110,6 +113,8 @@ export interface StoredBuild {
   createdAt: string;
   left: Uint8Array;
   right: Uint8Array;
+  /** Built without Tandem. */
+  stock?: boolean;
 }
 
 const KEEP_BUILDS = 4;
@@ -142,6 +147,12 @@ export async function getBuild(key: string): Promise<StoredBuild | null> {
   const d = await db();
   if (!d) return memoryBuilds.get(key) ?? null;
   return (await done(d.transaction("builds").objectStore("builds").get(key))) ?? null;
+}
+
+export async function allBuilds(): Promise<StoredBuild[]> {
+  const d = await db();
+  if (!d) return [...memoryBuilds.values()];
+  return (await done(d.transaction("builds").objectStore("builds").getAll())) as StoredBuild[];
 }
 
 export async function putBuild(build: StoredBuild): Promise<void> {

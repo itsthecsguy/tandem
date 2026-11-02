@@ -8,6 +8,10 @@ endif()
 if(CONFIG_TANDEM_AUTOFLASH)
   zephyr_library_sources(src/autoflash.c)
 
+  # The release the app reads from this file too, as a number the halves report.
+  file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/version.txt tandem_release LIMIT_COUNT 1)
+  zephyr_library_compile_definitions(TANDEM_RELEASE="${tandem_release}")
+
   # Embed the main keymap file, so the app can read the layout back from the
   # keyboard. The per-half .keymap files only include it, so look for the one
   # that defines the keymap node.

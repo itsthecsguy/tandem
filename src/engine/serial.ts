@@ -39,6 +39,8 @@ export interface TandemInfo {
   name: string;
   build: string;
   repo?: string;
+  /** The Tandem release in the firmware, from release 4 on. */
+  release?: number;
   /** Left half, protocol 3: whether the right half is connected to it. */
   peripheral?: boolean;
 }

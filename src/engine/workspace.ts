@@ -5,8 +5,11 @@
 import { GitHubApi, GitHubError } from "../../shared/github";
 import { keepSpelling, parseKeymap, toKeymap, writeKeymap } from "../../shared/keymap";
 import { readLayout } from "../../shared/layout";
-import { KEYMAP_PATH, MANIFEST_PATH, WORKFLOW_PATH, setupMessage, setupPlan } from "../../shared/setup";
-import type { AppState, Keymap, LayoutKey, RepoOption, RepoRef, Session, SetupStatus } from "../../shared/types";
+import { HOLD_PATH, KEYMAP_PATH, MANIFEST_PATH, WORKFLOW_PATH, setupMessage, setupPlan } from "../../shared/setup";
+import { BETA_BRANCH, makeBetaBranch } from "../../shared/beta";
+import { applySync, planSync } from "../../shared/sync";
+import type { AppState, KinesisStatus, Keymap, LayoutKey, RepoOption, RepoRef, Session, SetupStatus, UpdateCommit } from "../../shared/types";
+import { failedUpdate as lastFailedUpdate, removeTandem as commitRemoval, undoCommit, updateCommits } from "../../shared/undo";
 import { getToken, ghCliToken, missingScopes, oauthConfig, signOut as dropToken } from "./auth";
 import { MODULE_FILES } from "./module";
 import { loadState, saveState } from "./store";
@@ -27,17 +30,18 @@ const repoUrl = (r: RepoRef) => `https://github.com/${r.owner}/${r.name}/tree/${
 
 // Session: who's signed in, which repo, and whether Tandem is set up there.
 
-let setupCache: { key: string; status: SetupStatus } | null = null;
+let setupCache: { key: string; status: SetupStatus; kinesis: KinesisStatus | null } | null = null;
 
 async function readRepoFiles(gh: GitHubApi, repo: RepoRef, ref: string) {
-  const [workflow, manifest, keymap, info, ...module] = await Promise.all([
+  const [workflow, manifest, keymap, info, hold, ...module] = await Promise.all([
     gh.file(repo.owner, repo.name, WORKFLOW_PATH, ref),
     gh.file(repo.owner, repo.name, MANIFEST_PATH, ref),
     gh.file(repo.owner, repo.name, KEYMAP_PATH, ref),
     gh.file(repo.owner, repo.name, "config/info.json", ref),
+    gh.file(repo.owner, repo.name, HOLD_PATH, ref),
     ...MODULE_FILES.map((f) => gh.file(repo.owner, repo.name, f.path, ref)),
   ]);
-  return { workflow, manifest, keymap, info, module: new Map(MODULE_FILES.map((f, i) => [f.path, module[i]])) };
+  return { workflow, manifest, keymap, info, hold, module: new Map(MODULE_FILES.map((f, i) => [f.path, module[i]])) };
 }
 
 let whoCache: { token: string; login: string; scopes: string[] } | null = null;
@@ -76,6 +80,8 @@ export async function session(): Promise<Session> {
     ghLogin,
     repo: null,
     setup: null,
+    kinesis: null,
+    beta: null,
     onboarded: s.onboarded,
   };
   if (!auth) return base;
@@ -105,9 +111,12 @@ export async function session(): Promise<Session> {
   const key = `${repo.owner}/${repo.name}@${head}`;
   if (setupCache?.key !== key) {
     const { status } = setupPlan(await readRepoFiles(gh, repo, head), MODULE_FILES);
-    setupCache = { key, status };
+    // Only a repo with Tandem syncs, and failing to find out shouldn't stop the page.
+    const sync = status.installed || status.outdated ? await planSync(gh, repo, head).catch(() => null) : null;
+    setupCache = { key, status, kinesis: sync?.status ?? null };
   }
-  return { ...signedIn, repo: { ...repo, url: repoUrl(repo), head }, setup: setupCache.status };
+  const beta = repo.branch === BETA_BRANCH ? { from: s.betaFrom ?? (await gh.repo(repo.owner, repo.name)).defaultBranch } : null;
+  return { ...signedIn, repo: { ...repo, url: repoUrl(repo), head }, setup: setupCache.status, kinesis: setupCache.kinesis, beta };
 }
 
 export function useGhLogin() {
@@ -172,7 +181,7 @@ async function commitSetup(onlyUpdate: boolean): Promise<string | null> {
   for (let attempt = 0; ; attempt++) {
     const head = await gh.head(repo.owner, repo.name, repo.branch);
     const { status, files } = setupPlan(await readRepoFiles(gh, repo, head), MODULE_FILES);
-    if (onlyUpdate && (!status.outdated || status.blocker)) return null;
+    if (onlyUpdate && (!status.outdated || status.blocker || status.held)) return null;
     if (status.blocker) throw new Error(status.blocker);
     setupCache = null;
     workspace = null;
@@ -186,6 +195,70 @@ async function commitSetup(onlyUpdate: boolean): Promise<string | null> {
       workspace = null;
     }
   }
+}
+
+/**
+ * Commits Kinesis's tested changes when the branch lacks them. Returns the new
+ * head and the files it left alone, or null if there's nothing to bring in or
+ * the changes clash with the user's.
+ */
+export async function updateKinesis(): Promise<{ sha: string; kept: string[] } | null> {
+  const gh = await github();
+  const repo = connectedRepo();
+  const head = await gh.head(repo.owner, repo.name, repo.branch);
+  const plan = await planSync(gh, repo, head);
+  if (!plan || plan.status.conflicts.length || plan.status.held) return null;
+  const { status } = setupPlan(await readRepoFiles(gh, repo, head), MODULE_FILES);
+  if (status.blocker || !(status.installed || status.outdated)) return null;
+  try {
+    return { sha: await applySync(gh, repo, head, plan), kept: plan.status.kept };
+  } finally {
+    setupCache = null;
+    workspace = null;
+  }
+}
+
+/** Tandem's commits on this branch that the user can undo, newest first. */
+export async function updateHistory(): Promise<UpdateCommit[]> {
+  return updateCommits(await github(), connectedRepo());
+}
+
+/** Tandem's commit to offer undoing, now that the build at the branch's head failed. */
+export async function failedUpdate(): Promise<UpdateCommit | null> {
+  return lastFailedUpdate(await github(), connectedRepo());
+}
+
+export async function undoUpdate(sha: string): Promise<string> {
+  try {
+    return await undoCommit(await github(), connectedRepo(), sha);
+  } finally {
+    setupCache = null;
+    workspace = null;
+  }
+}
+
+/** Takes Tandem out of the branch. Returns the new head. */
+export async function removeTandem(): Promise<string> {
+  try {
+    return await commitRemoval(await github(), connectedRepo());
+  } finally {
+    setupCache = null;
+    workspace = null;
+  }
+}
+
+/** Makes the trial branch from the connected branch, and switches to it. Returns files the port left alone. */
+export async function startBeta(): Promise<string[]> {
+  const repo = connectedRepo();
+  const kept = await makeBetaBranch(await github(), repo);
+  connectRepo({ ...repo, branch: BETA_BRANCH });
+  saveState({ betaFrom: repo.branch });
+  return kept;
+}
+
+export async function leaveBeta(from: string) {
+  connectRepo({ ...connectedRepo(), branch: from });
+  saveState({ betaFrom: null });
 }
 
 // Workspace: the keymap and layout at the branch's latest commit.

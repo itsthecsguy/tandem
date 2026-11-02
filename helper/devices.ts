@@ -89,6 +89,7 @@ interface ProbeResult {
   name: string;
   build: string;
   repo?: string;
+  release?: number;
 }
 
 // Probe results per port and USB session. A port that doesn't answer gets a
@@ -188,7 +189,7 @@ export function touchBootloader(path: string): Promise<void> {
 }
 
 function emptyHalf(side: Side): HalfStatus {
-  return { side, mode: "missing", serial: null, autoflash: false, build: null, repo: null, protocol: 0, port: null, volume: null, otherPorts: [] };
+  return { side, mode: "missing", serial: null, autoflash: false, build: null, repo: null, protocol: 0, version: null, port: null, volume: null, otherPorts: [] };
 }
 
 let inflight: Promise<DevicesStatus> | null = null;
@@ -220,6 +221,7 @@ async function scan(): Promise<DevicesStatus> {
           half.build = result.build;
           half.repo = result.repo || null;
           half.protocol = result.tandem;
+          half.version = result.release ?? null;
           half.port = port;
         } else {
           half.otherPorts.push(port);

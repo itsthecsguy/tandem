@@ -18,6 +18,7 @@ interface Run {
   id: number;
   sha: string;
   event: string;
+  failed: boolean;
   artifacts: { id: number; name: string; zip: Uint8Array }[];
 }
 
@@ -26,12 +27,25 @@ interface Repo {
   name: string;
   private: boolean;
   template: boolean;
+  /** The repo it's a fork of. */
+  source: string | null;
   defaultBranch: string;
   branches: Map<string, string>;
 }
 
 const text = (data: Uint8Array) => new TextDecoder().decode(data);
 const bytes = (s: string) => new TextEncoder().encode(s);
+
+/** The same content has the same SHA in every repo, as on GitHub. */
+function blobSha(data: Uint8Array): string {
+  let a = 0x811c9dc5;
+  let b = data.length;
+  for (const byte of data) {
+    a = Math.imul(a ^ byte, 16777619);
+    b = Math.imul(b ^ byte, 31) + 7;
+  }
+  return `b${(a >>> 0).toString(16).padStart(8, "0")}${(b >>> 0).toString(16).padStart(8, "0")}`.padEnd(40, "0");
+}
 
 /** A real UF2 file whose firmware is just text with the build ID, so tests can tell builds apart. */
 export function fakeUf2(side: string, build: string): Uint8Array {
@@ -70,16 +84,25 @@ export class FakeGitHub {
   staleHeads: string[] = [];
   /** Runs stay in progress after the upload, saving their cache, as on a repo's first build. */
   savingCache = false;
+  /** Builds that start now fail on GitHub. */
+  failBuilds = false;
+  /** File modes that aren't the usual 100644, by path. */
+  readonly modes = new Map<string, string>();
+  /** Fails commits with more than one parent, as if GitHub couldn't find the other parent. */
+  refuseMerges = false;
+  /** Fails every new commit, as during an outage. */
+  refuseCommits = false;
   private blobs = new Map<string, Uint8Array>();
   private trees = new Map<string, Files>();
   private seq = 0;
 
   private id(prefix: string) {
     this.seq++;
-    return `${prefix}${this.seq.toString(16).padStart(39, "0")}`;
+    // Different in the first 7 characters, since build IDs are that long.
+    return `${prefix}${this.seq.toString(16).padStart(6, "0")}`.padEnd(40, "0");
   }
 
-  addRepo(owner: string, name: string, files: Record<string, string | Uint8Array>, options: { branch?: string; template?: boolean; private?: boolean } = {}) {
+  addRepo(owner: string, name: string, files: Record<string, string | Uint8Array>, options: { branch?: string; template?: boolean; private?: boolean; source?: string } = {}) {
     const branch = options.branch ?? "main";
     const tree: Files = new Map(Object.entries(files).map(([p, c]) => [p, typeof c === "string" ? bytes(c) : c]));
     const sha = this.id("c");
@@ -89,10 +112,19 @@ export class FakeGitHub {
       name,
       private: !!options.private,
       template: !!options.template,
+      source: options.source ?? null,
       defaultBranch: branch,
       branches: new Map([[branch, sha]]),
     });
     return sha;
+  }
+
+  /** A fork: the source's history under a new name. */
+  fork(owner: string, name: string, source: string, sha?: string) {
+    const from = this.repos.get(source)!;
+    const head = sha ?? from.branches.get(from.defaultBranch)!;
+    this.repos.set(`${owner}/${name}`, { owner, name, private: false, template: false, source, defaultBranch: "main", branches: new Map([["main", head]]) });
+    return head;
   }
 
   head(owner: string, name: string, branch = "main") {
@@ -105,12 +137,15 @@ export class FakeGitHub {
   }
 
   /** Commits straight to a branch, as if someone pushed from elsewhere. */
-  push(owner: string, name: string, branch: string, files: Record<string, string>, message = "Elsewhere") {
+  push(owner: string, name: string, branch: string, files: Record<string, string | Uint8Array | null>, message = "Elsewhere", commitSha?: string) {
     const repo = this.repos.get(`${owner}/${name}`)!;
     const parent = repo.branches.get(branch)!;
     const tree = new Map(this.commits.get(parent)!.tree);
-    for (const [p, c] of Object.entries(files)) tree.set(p, bytes(c));
-    const sha = this.id("c");
+    for (const [p, c] of Object.entries(files)) {
+      if (c === null) tree.delete(p);
+      else tree.set(p, typeof c === "string" ? bytes(c) : c);
+    }
+    const sha = commitSha ?? this.id("c");
     this.commits.set(sha, { tree, parents: [parent], message });
     repo.branches.set(branch, sha);
     return sha;
@@ -126,6 +161,7 @@ export class FakeGitHub {
       id,
       sha,
       event,
+      failed: this.failBuilds,
       artifacts: [
         { id: id * 10 + 1, name: "firmware-clique", zip: zip("clique") },
         { id: id * 10 + 2, name: "firmware-no-clique", zip: zip("legacy") },
@@ -195,22 +231,85 @@ export class FakeGitHub {
       this.trees.set(treeSha, new Map(this.commits.get(r[1])!.tree));
       return this.json({ tree: { sha: treeSha } });
     }
+    if (rest === "/git/trees" && method === "POST" && !body.tree.length) {
+      return this.json({ message: "Invalid tree info" }, 422);
+    }
+    if ((r = /^\/git\/trees\/(.+)$/.exec(rest)) && method === "GET") {
+      const tree = this.commits.get(decodeURIComponent(r[1]))?.tree;
+      if (!tree) return this.notFound();
+      const entries = [...tree].map(([p, data]) => {
+        const sha = blobSha(data);
+        this.blobs.set(sha, data);
+        return { path: p, mode: this.modes.get(p) ?? "100644", type: "blob", sha };
+      });
+      return this.json({ tree: entries, truncated: false });
+    }
+    if ((r = /^\/git\/blobs\/(.+)$/.exec(rest)) && method === "GET") {
+      const data = this.blobs.get(r[1]);
+      return data ? this.json({ content: toBase64(data), encoding: "base64" }) : this.notFound();
+    }
+    if (rest === "/commits" && method === "GET") {
+      const out: unknown[] = [];
+      let sha: string | undefined = repo.branches.get(u.searchParams.get("sha")!);
+      const count = Number(u.searchParams.get("per_page") ?? 30);
+      while (sha && out.length < count) {
+        out.push(this.rawCommit(sha));
+        sha = this.commits.get(sha)!.parents[0];
+      }
+      return this.json(out);
+    }
+    if ((r = /^\/commits\/(.+)$/.exec(rest)) && method === "GET") {
+      return this.commits.has(r[1]) ? this.json(this.rawCommit(r[1])) : this.notFound();
+    }
+    if ((r = /^\/compare\/(.+)\.\.\.(.+)$/.exec(rest)) && method === "GET") {
+      const resolve = (ref: string) => {
+        const [who, branch] = ref.includes(":") ? ref.split(":") : [null, ref];
+        const from = who ? [...this.repos.values()].find((x) => x.owner === who && x.source === repo.source) : repo;
+        const fromFork = who ? [...this.repos.values()].find((x) => x.owner === who && x.source === `${owner}/${name}`) : null;
+        const b = decodeURIComponent(branch);
+        return (fromFork ?? from)?.branches.get(b) ?? (this.commits.has(b) ? b : null);
+      };
+      const base = resolve(decodeURIComponent(r[1]));
+      const head = resolve(decodeURIComponent(r[2]));
+      if (!base || !head) return this.notFound();
+      const inBase = this.ancestors(base);
+      const inHead = this.ancestors(head);
+      const ahead = [...inHead].filter((c) => !inBase.has(c));
+      const behind = [...inBase].filter((c) => !inHead.has(c));
+      const mergeBase = [...inHead].find((c) => inBase.has(c));
+      const status = !ahead.length && !behind.length ? "identical" : !behind.length ? "ahead" : !ahead.length ? "behind" : "diverged";
+      return this.json({ status, ahead_by: ahead.length, behind_by: behind.length, merge_base_commit: { sha: mergeBase }, commits: ahead.reverse().map((c) => this.rawCommit(c)) });
+    }
     if (rest === "/git/blobs" && method === "POST") {
-      const sha = this.id("b");
-      this.blobs.set(sha, fromBase64(body.content));
+      const data = fromBase64(body.content);
+      const sha = blobSha(data);
+      this.blobs.set(sha, data);
       return this.json({ sha }, 201);
     }
     if (rest === "/git/trees" && method === "POST") {
       const tree: Files = new Map(body.base_tree ? this.trees.get(body.base_tree) : []);
-      for (const e of body.tree) tree.set(e.path, e.content !== undefined ? bytes(e.content) : this.blobs.get(e.sha)!);
+      for (const e of body.tree) {
+        if (e.mode !== "100644") this.modes.set(e.path, e.mode);
+        if (e.sha === null) tree.delete(e.path);
+        else tree.set(e.path, e.content !== undefined ? bytes(e.content) : this.blobs.get(e.sha)!);
+      }
       const sha = this.id("t");
       this.trees.set(sha, tree);
       return this.json({ sha }, 201);
     }
     if (rest === "/git/commits" && method === "POST") {
+      if (this.refuseMerges && body.parents.length > 1) return this.json({ message: "Parent SHA does not exist" }, 422);
+      if (this.refuseCommits) return this.json({ message: "Service unavailable" }, 503);
       const sha = this.id("c");
       this.commits.set(sha, { tree: this.trees.get(body.tree)!, parents: body.parents, message: body.message });
       return this.json({ sha }, 201);
+    }
+    if (rest === "/git/refs" && method === "POST") {
+      const branch = body.ref.replace("refs/heads/", "");
+      if (repo.branches.has(branch)) return this.json({ message: "Reference already exists" }, 422);
+      repo.branches.set(branch, body.sha);
+      if (this.buildOnPush) this.build(body.sha, "push");
+      return this.json({ ref: body.ref }, 201);
     }
     if ((r = /^\/git\/refs\/heads\/(.+)$/.exec(rest)) && method === "PATCH") {
       const branch = decodeURIComponent(r[1]);
@@ -250,7 +349,7 @@ export class FakeGitHub {
                 conclusion: null,
                 steps: [done("West Build (left)", 10), done("Archive (Adv360)", 15), { name: "Post Cache west modules", status: "in_progress", conclusion: null, number: 16 }],
               }
-            : { name, status: "completed", conclusion: "success", steps: [] };
+            : { name, status: "completed", conclusion: run.failed ? "failure" : "success", steps: [] };
         return this.json({ jobs: ["Build (Legacy)", "Build (Clique)"].map(job) });
       }
       if (r[2] === "/artifacts") {
@@ -264,12 +363,30 @@ export class FakeGitHub {
     return this.notFound();
   }
 
+  private ancestors(sha: string): Set<string> {
+    const seen = new Set<string>();
+    const queue = [sha];
+    while (queue.length) {
+      const next = queue.shift()!;
+      if (seen.has(next)) continue;
+      seen.add(next);
+      queue.push(...(this.commits.get(next)?.parents ?? []));
+    }
+    return seen;
+  }
+
+  private rawCommit(sha: string) {
+    const c = this.commits.get(sha)!;
+    return { sha, commit: { message: c.message, committer: { date: "2026-11-01T00:00:00Z" } }, parents: c.parents.map((p) => ({ sha: p })) };
+  }
+
   private raw(r: Repo) {
     return {
       name: r.name,
       full_name: `${r.owner}/${r.name}`,
       owner: { login: r.owner },
-      fork: false,
+      fork: !!r.source,
+      ...(r.source ? { source: { full_name: r.source } } : {}),
       private: r.private,
       default_branch: r.defaultBranch,
       html_url: `https://github.com/${r.owner}/${r.name}`,
@@ -282,7 +399,7 @@ export class FakeGitHub {
     return {
       id: run.id,
       status: this.savingCache ? "in_progress" : "completed",
-      conclusion: this.savingCache ? null : "success",
+      conclusion: this.savingCache ? null : run.failed ? "failure" : "success",
       html_url: `https://github.com/${owner}/${name}/actions/runs/${run.id}`,
       head_sha: run.sha,
       event: run.event,

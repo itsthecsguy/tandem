@@ -159,6 +159,55 @@ describe("Web Serial keyboard", () => {
     expect(order).toEqual(["flash-right", "flash-left"]);
   });
 
+  it("goes back to Kinesis's firmware without waiting for ports that won't come", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowAll();
+    kb.allowUpdatePorts();
+    const { engine, events } = await setup(kb);
+    await engine.leaveTandem();
+    const end = await until(() => events.find((e) => e.type === "done" || e.type === "error"), 60_000);
+
+    const build = github.head("octocat", "adv360").slice(0, 7);
+    expect(end).toEqual({ type: "done", build, checked: false });
+    expect(github.fileAt(github.head("octocat", "adv360"), "tandem/zmk-tandem/Kconfig")).toBeNull();
+    expect(kb.left.flashedWith).toBe(`left-clique:${build}`);
+    expect(kb.right.flashedWith).toBe(`right-clique:${build}`);
+    expect(events.some((e) => e.type === "grant-port")).toBe(false);
+    expect(events).toContainEqual({ type: "step", step: "verify", state: "skipped", detail: "Kinesis's firmware can't report its build" });
+  });
+
+  it("puts a kept build back on both halves and checks they run it", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.allowAll();
+    kb.allowUpdatePorts();
+    const { engine, events } = await setup(kb);
+    const first = await run(engine, events, kb);
+    const kept = (await engine.history()).builds[0];
+    expect(kept.id).toBe((first as { build: string }).build);
+
+    // A newer commit goes on the keyboard, then the kept one goes back.
+    const { keymap } = await engine.state();
+    keymap.layers[0].bindings[16] = "&kp Q";
+    events.length = 0;
+    await engine.update(keymap);
+    await until(() => events.find((e) => e.type === "done"), 60_000);
+    expect(kb.left.build).not.toBe(kept.id);
+
+    events.length = 0;
+    await engine.flashBuild(kept.key);
+    expect(await until(() => events.find((e) => e.type === "done" || e.type === "error"), 60_000)).toEqual({ type: "done", build: kept.id, checked: true });
+    expect([kb.left.build, kb.right.build]).toEqual([kept.id, kept.id]);
+  });
+
+  it("reads the release a half's firmware reports", async () => {
+    const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
+    kb.left.release = 4;
+    kb.allowAll();
+    const { access } = await setup(kb);
+    await until(() => access.devices().left.autoflash);
+    expect(access.devices().left.version).toBe(4);
+  });
+
   it("leaves a restarted half in update mode a moment before sending", async () => {
     // Sending while macOS is still mounting the half's drive stalls the bootloader.
     const kb = new FakeKeyboard({ left: { build: "old1234" }, right: { build: "old1234" } });
@@ -242,8 +291,9 @@ describe("Web Serial keyboard", () => {
     kb.allowUpdatePorts();
     const { engine, access, events } = await setup(kb);
     await until(() => access.devices().right.autoflash);
+    const end = await run(engine, events, kb);
     const build = github.head("octocat", "adv360").slice(0, 7);
-    expect(await run(engine, events, kb)).toEqual({ type: "done", build, checked: true });
+    expect(end).toEqual({ type: "done", build, checked: true });
     expect(events.some((e) => ["manual", "grant-port", "update-port", "drive"].includes(e.type))).toBe(false);
     expect(kb.right.flashedWith).toBe(`right-clique:${build}`);
     expect(access.devices().right).toMatchObject({ autoflash: true, build });

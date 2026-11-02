@@ -19,6 +19,12 @@
 
 #include <errno.h>
 
+#if __has_include(<zephyr/version.h>)
+#include <zephyr/version.h>
+#else
+#include <version.h>
+#endif
+
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/init.h>
@@ -31,9 +37,14 @@
 
 LOG_MODULE_REGISTER(tandem_reconnect, CONFIG_ZMK_LOG_LEVEL);
 
-#define ADV_OPTIONS                                                                                \
-    (BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME | BT_LE_ADV_OPT_USE_NAME |                 \
-     BT_LE_ADV_OPT_FORCE_NAME_IN_AD)
+/* Zephyr 4 folded these two into BT_LE_ADV_OPT_CONN, an enum that #ifdef can't see. */
+#if KERNEL_VERSION_MAJOR >= 4
+#define ADV_CONNECTABLE_ONCE BT_LE_ADV_OPT_CONN
+#else
+#define ADV_CONNECTABLE_ONCE (BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME)
+#endif
+
+#define ADV_OPTIONS (ADV_CONNECTABLE_ONCE | BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_FORCE_NAME_IN_AD)
 
 /* ZMK's own advertising, from app/src/ble.c, every 100 to 150 ms. */
 static const struct bt_le_adv_param fast_param =

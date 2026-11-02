@@ -78,7 +78,7 @@ describe("browser engine", () => {
     expect(signedIn).toMatchObject({ signedIn: true, login: "octocat", source: "oauth", missingScopes: [], privateRepos: false });
 
     const s = await e.connect({ owner: "octocat", name: "adv360", branch: "main" });
-    expect(s.setup).toEqual({ installed: true, outdated: false, changes: [], blocker: null });
+    expect(s.setup).toMatchObject({ installed: true, outdated: false, changes: [], blocker: null });
 
     const state = await e.state();
     expect(state.keymap.layers.map((l) => l.name)).toEqual(["Base", "Kp", "Fn", "Mod"]);
@@ -225,7 +225,7 @@ describe("browser engine", () => {
 
     const head = fake.head("octocat", "adv360");
     const commit = fake.commits.get(head)!;
-    expect(commit.message).toMatch(/^Update Tandem\n/);
+    expect(commit.message).toMatch(/^Update Tandem to release \d+\n/);
     expect(fake.commits.get(commit.parents[0])!.message).toBe("Update layout with Tandem");
     expect(fake.fileAt(head, "tandem/zmk-tandem/src/reconnect.c")).toBe(MODULE_FILES.find((f) => f.path.endsWith("reconnect.c"))!.content);
     expect(parseKeymap(fake.fileAt(head, "config/adv360.keymap")!).layers[0].bindings[15]).toBe("&ltr 2 Q");

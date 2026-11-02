@@ -1,21 +1,12 @@
 // tandemkb.com/privacy. Plain text about what Tandem touches and where it goes,
 // kept in step with src/engine/store.ts and worker/index.ts.
 
-import { ThemeMenu } from "./components/ThemeMenu";
+import { DocHead } from "./components/DocHead";
 
 export function Privacy() {
   return (
     <div className="doc">
-      <header className="doc__head">
-        <a className="doc__brand" href="/">
-          <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden>
-            <rect x="2.5" y="8" width="12" height="16" rx="3.5" fill="currentColor" />
-            <rect x="17.5" y="8" width="12" height="16" rx="3.5" fill="currentColor" opacity="0.45" />
-          </svg>
-          Tandem
-        </a>
-        <ThemeMenu />
-      </header>
+      <DocHead />
 
       <main className="doc__body">
         <h1>Privacy</h1>
@@ -41,8 +32,8 @@ export function Privacy() {
         <p>
           Your browser talks to GitHub's API directly, with your token. Tandem asks for two permissions: <code>public_repo</code>, or{" "}
           <code>repo</code> if you allow private repos, and <code>workflow</code>. It uses them to read and commit to the repo you picked,
-          create a repo when you ask for one, start your firmware build and download what it built. GitHub also serves the profile pictures
-          on the page.
+          create a repo when you ask for one, start your firmware build and download what it built. It also reads Kinesis's public config
+          repo, to see what changed there. GitHub also serves the profile pictures on the page.
         </p>
         <p>
           To take Tandem's access away, revoke it on GitHub under Settings, Applications, Authorized OAuth Apps.
@@ -73,7 +64,7 @@ export function Privacy() {
           <a href="https://github.com/itsthecsguy/tandem" target="_blank" rel="noreferrer">
             github.com/itsthecsguy/tandem
           </a>
-          , and questions go to its issues. Last changed October 26, 2026.
+          , and questions go to its issues. Last changed November 1, 2026.
         </p>
       </main>
     </div>

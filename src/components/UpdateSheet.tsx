@@ -284,6 +284,49 @@ function DrivePrompt({ side, onAct }: { side: Side; onAct: Act }) {
   );
 }
 
+/** Kinesis's reset file, which clears what a half saved. Kinesis's firmware has no way to do this from a key. */
+const SETTINGS_RESET = "https://github.com/KinesisCorporation/Adv360-Pro-ZMK/raw/V3.0/settings-reset.uf2";
+
+/** After going back to Kinesis's firmware: what's left, and how to clear saved settings if the user wants to. */
+function LeftTandem({ view }: { view: JobView }) {
+  return (
+    <>
+      <div className="notice notice--ok">
+        <Check size={16} />
+        <span>
+          <strong>Your keyboard runs Kinesis's firmware again,</strong> built from your repo, with your layout. Tandem is out of your repo. To update
+          from now on, use Kinesis's steps, or run Tandem's setup again.
+        </span>
+      </div>
+      <details className="reset-guide">
+        <summary>Also clear saved settings</summary>
+        <p>This removes Bluetooth pairings and anything you changed in Clique. You can skip it if the keyboard works as you want.</p>
+        <ol>
+          <li>
+            Download{" "}
+            <a href={SETTINGS_RESET} target="_blank" rel="noreferrer">
+              settings-reset.uf2
+            </a>{" "}
+            from Kinesis
+            {view.runUrl && (
+              <>
+                , and your firmware from{" "}
+                <a href={view.runUrl} target="_blank" rel="noreferrer">
+                  this build on GitHub
+                </a>
+              </>
+            )}
+            .
+          </li>
+          <li>Press the right half's reset button twice, quickly. A drive named ADV360PRO appears. Copy settings-reset.uf2 onto it.</li>
+          <li>When the drive goes away, press reset twice again and copy the right half's firmware onto the drive.</li>
+          <li>Do the same with the left half, then pair your computers again.</li>
+        </ol>
+      </details>
+    </>
+  );
+}
+
 function GrantPortPrompt({
   side,
   before,
@@ -427,6 +470,8 @@ interface Props {
   onCancel: () => void;
   onClose: () => void;
   onRetry: () => void;
+  /** Undoes one of Tandem's commits, then runs the update again. */
+  onUndo: (sha: string) => void;
 }
 
 /** A first-time setup: some half needs the user's hands. */
@@ -512,7 +557,26 @@ export function UpdateProgress({
         <SetupWait view={view} readySide={readySide} />
       )}
 
-      {view.done && (
+      {view.notes.map((note) => (
+        <div key={note} className="notice">
+          <Info size={16} />
+          <span>{note}</span>
+        </div>
+      ))}
+
+      {view.done && view.kind === "leaving" && <LeftTandem view={view} />}
+
+      {view.done && view.kind === "rollback" && (
+        <div className="notice notice--ok">
+          <Check size={16} />
+          <span>
+            <strong>Your keyboard runs build <code>{view.done}</code>, and your repo stays as it is.</strong> The next keyboard update goes back to your
+            latest commit. If that commit is the trouble, undo it first from Versions and undo.
+          </span>
+        </div>
+      )}
+
+      {view.done && view.kind === "update" && (
         <div className="notice notice--ok">
           <Check size={16} />
           <span>
@@ -544,7 +608,10 @@ export function UpdateProgress({
       {view.error && (
         <div className="notice notice--err">
           <X size={16} />
-          <span>{view.error}</span>
+          <span>
+            {view.error}
+            {view.undoable && ` Tandem just committed "${view.undoable.title}", which may be why.`}
+          </span>
         </div>
       )}
 
@@ -574,12 +641,14 @@ export function UpdateProgress({
 
 export function updateHeading(view: JobView, firstTime = false): string {
   const setup = isSetup(view, firstTime);
+  if (view.kind === "leaving") return view.done ? "Back on Kinesis's firmware" : view.error ? "Going back stopped" : "Going back to Kinesis's firmware";
+  if (view.kind === "rollback") return view.done ? "The older build is on your keyboard" : view.error ? "Going back stopped" : "Putting an older build back";
   if (view.done) return setup ? "Setup is done" : "Your keyboard is updated";
   if (view.error) return setup ? "Setup stopped" : "The update stopped";
   return setup ? "One-time setup" : "Updating your keyboard";
 }
 
-export function UpdateSheet({ view, keymap, layout, firstTime, onAct, onCancel, onClose, onRetry }: Props) {
+export function UpdateSheet({ view, keymap, layout, firstTime, onAct, onCancel, onClose, onRetry, onUndo }: Props) {
   return (
     <div className="scrim" role="presentation">
       <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
@@ -604,9 +673,16 @@ export function UpdateSheet({ view, keymap, layout, firstTime, onAct, onCancel, 
               <button type="button" className="btn" onClick={onClose}>
                 Close
               </button>
-              <button type="button" className="btn btn--primary" onClick={onRetry}>
-                Try again
-              </button>
+              {view.undoable && (
+                <button type="button" className="btn" title={view.undoable.title} onClick={() => onUndo(view.undoable!.sha)}>
+                  Undo Tandem's commit and try again
+                </button>
+              )}
+              {view.kind !== "rollback" && (
+                <button type="button" className="btn btn--primary" onClick={onRetry}>
+                  Try again
+                </button>
+              )}
             </>
           ) : (
             <button type="button" className="btn btn--primary" onClick={onClose}>

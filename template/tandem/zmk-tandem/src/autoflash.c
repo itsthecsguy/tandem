@@ -5,9 +5,9 @@
  * this half reboots into the UF2 bootloader, the same way &bootloader does.
  * The host can also write one of these commands, each ending in a newline:
  *
- *   info        one JSON line: protocol version, role, name, build ID and
- *               repo. On the left half, also whether the right half is
- *               connected to it.
+ *   info        one JSON line: protocol version, role, name, build ID, repo
+ *               and Tandem release. On the left half, also whether the right
+ *               half is connected to it.
  *   keymap      a JSON line with the byte count, then the keymap source itself
  *   boot right  left half only: reboots the right half into its bootloader
  *               over the split link, as &bootloader pressed on that half
@@ -46,7 +46,14 @@ LOG_MODULE_REGISTER(tandem_autoflash, CONFIG_ZMK_LOG_LEVEL);
 #define RELAY 1
 #include <zephyr/bluetooth/conn.h>
 #include <zmk/behavior.h>
+// ZMK 4 renamed this when it added wired splits.
+#if __has_include(<zmk/split/central.h>)
+#include <zmk/split/central.h>
+#define invoke_on_right zmk_split_central_invoke_behavior
+#else
 #include <zmk/split/bluetooth/central.h>
+#define invoke_on_right zmk_split_bt_invoke_behavior
+#endif
 #else
 #define RELAY 0
 #endif
@@ -93,7 +100,7 @@ static bool right_connected(void) {
 static void boot_right_handler(struct k_work *work) {
     struct zmk_behavior_binding binding = {.behavior_dev = DEVICE_DT_NAME(DT_NODELABEL(bootloader))};
     struct zmk_behavior_binding_event event = {.position = 0, .timestamp = k_uptime_get(), .source = 0};
-    int err = right_connected() ? zmk_split_bt_invoke_behavior(0, &binding, event, true) : -ENOTCONN;
+    int err = right_connected() ? invoke_on_right(0, &binding, event, true) : -ENOTCONN;
     if (err) {
         LOG_WRN("Could not restart the right half (%d)", err);
     }
@@ -114,7 +121,7 @@ static void info_work_handler(struct k_work *work) {
 #endif
     int len = snprintk(line, sizeof(line),
                        "{\"tandem\":" PROTOCOL_VERSION ",\"role\":\"" ROLE "\",\"name\":\"" CONFIG_ZMK_KEYBOARD_NAME
-                       "\",\"build\":\"" CONFIG_TANDEM_BUILD_ID "\",\"repo\":\"" CONFIG_TANDEM_REPO "\"%s}\n",
+                       "\",\"build\":\"" CONFIG_TANDEM_BUILD_ID "\",\"repo\":\"" CONFIG_TANDEM_REPO "\",\"release\":" TANDEM_RELEASE "%s}\n",
                        right);
     send(line, MIN((size_t)len, sizeof(line) - 1));
 }

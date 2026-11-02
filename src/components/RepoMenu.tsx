@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronDown, LogOut, Repeat, RotateCcw, Shield } from "lucide-react";
+import { ArrowUpRight, ChevronDown, History, LogOut, Repeat, RotateCcw, Shield } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { RepoRef } from "../../shared/types";
@@ -7,12 +7,13 @@ import { GitHubMark } from "./GitHubMark";
 interface Props {
   repo: RepoRef & { url: string };
   login: string | null;
+  onHistory: () => void;
   onChangeRepo: () => void;
   onRestartSetup: () => void;
   onSignOut: () => void;
 }
 
-export function RepoMenu({ repo, login, onChangeRepo, onRestartSetup, onSignOut }: Props) {
+export function RepoMenu({ repo, login, onHistory, onChangeRepo, onRestartSetup, onSignOut }: Props) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -40,6 +41,17 @@ export function RepoMenu({ repo, login, onChangeRepo, onRestartSetup, onSignOut 
           <a className="menu__item" role="menuitem" href={repo.url} target="_blank" rel="noreferrer">
             <ArrowUpRight size={15} /> Open on GitHub
           </a>
+          <button
+            type="button"
+            className="menu__item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              onHistory();
+            }}
+          >
+            <History size={15} /> Versions and undo
+          </button>
           <button type="button" className="menu__item" role="menuitem" onClick={onChangeRepo}>
             <Repeat size={15} /> Change repo or branch
           </button>

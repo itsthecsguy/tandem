@@ -3041,3 +3041,82 @@ button.link:disabled {
   border-top: 1px solid var(--border);
   font-size: var(--fs-sm);
 }
+
+/* Versions and undo */
+
+.versions {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0 0 16px;
+  font-size: 13px;
+}
+
+.versions dt {
+  color: var(--text-3);
+}
+
+.versions dd {
+  margin: 0;
+}
+
+.versions svg {
+  vertical-align: -2px;
+}
+
+.history-section {
+  margin-top: 16px;
+}
+
+.history-section .hint {
+  margin: 4px 0 8px;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.history-list small {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.whats-new {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.whats-new ul {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+}
+
+.reset-guide {
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.reset-guide summary {
+  cursor: pointer;
+}
+
+.reset-guide ol {
+  padding-left: 18px;
+}
+
+.doc__date {
+  color: var(--text-3);
+  margin-top: -8px;
+}

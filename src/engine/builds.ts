@@ -6,8 +6,8 @@
 import { unzipSync } from "fflate";
 
 import type { GitHubApi, RunJob, WorkflowRun } from "../../shared/github";
-import type { BuildSettings, JobEvent, RepoRef, Side } from "../../shared/types";
-import { getBuild, putBuild } from "./store";
+import type { BuildSettings, JobEvent, KeptBuild, RepoRef, Side } from "../../shared/types";
+import { allBuilds, getBuild, putBuild } from "./store";
 import { sleep } from "./util";
 
 type Emit = (e: JobEvent) => void;
@@ -17,6 +17,8 @@ export interface Build {
   createdAt: string;
   left: Uint8Array;
   right: Uint8Array;
+  /** Built without Tandem. */
+  stock?: boolean;
 }
 
 // Kinesis's workflow builds two variants. Studio is what Kinesis calls Clique.
@@ -30,6 +32,22 @@ export async function cachedBuild(sha: string, settings: BuildSettings): Promise
   const stored = await getBuild(cacheKey(sha, settings)).catch(() => null);
   return stored && { id: stored.id, createdAt: stored.createdAt, left: stored.left, right: stored.right };
 }
+
+/** The builds this browser kept, newest first. */
+export async function keptBuilds(): Promise<KeptBuild[]> {
+  const stored = await allBuilds().catch(() => []);
+  return stored
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((b) => ({ key: b.key, id: b.id, createdAt: b.createdAt, studio: b.key.endsWith("-firmware-clique"), stock: !!b.stock }));
+}
+
+export async function keptBuild(key: string): Promise<Build | null> {
+  const stored = await getBuild(key).catch(() => null);
+  return stored && { id: stored.id, createdAt: stored.createdAt, left: stored.left, right: stored.right, stock: stored.stock };
+}
+
+/** GitHub built the commit and it failed, as opposed to Tandem losing track of it. */
+export class BuildFailed extends Error {}
 
 function describe(job: RunJob | undefined): string {
   if (!job || job.status === "queued") return "Waiting for a GitHub runner";
@@ -65,6 +83,7 @@ export async function cloudBuild(
   settings: BuildSettings,
   emit: Emit,
   signal: AbortSignal,
+  options: { stock?: boolean } = {},
 ): Promise<Build> {
   const { owner, name } = repo;
   const want = variant(settings);
@@ -99,7 +118,7 @@ export async function cloudBuild(
     if (job && uploaded(job)) break;
     if (job?.status === "completed" || (!job && run.status === "completed")) {
       const conclusion = job ? job.conclusion : run.conclusion;
-      if (conclusion !== "success") throw new Error(`The firmware build failed on GitHub (${conclusion}). Open the run to see why.`);
+      if (conclusion !== "success") throw new BuildFailed(`The firmware build failed on GitHub (${conclusion}). Open the run to see why.`);
       break;
     }
     emit({ type: "step", step: "build", state: "active", detail: describe(job) });
@@ -117,7 +136,7 @@ export async function cloudBuild(
   if (!artifact) throw new Error(`The build finished but has no ${want.artifact} artifact.`);
 
   const { left, right } = firmwareFromZip(await gh.artifactZip(owner, name, artifact.id));
-  const build: Build = { id, createdAt: new Date().toISOString(), left, right };
+  const build: Build = { id, createdAt: new Date().toISOString(), left, right, stock: options.stock };
   await putBuild({ key: cacheKey(sha, settings), ...build }).catch(() => {
     // Not being able to keep it only means downloading it again next time.
   });

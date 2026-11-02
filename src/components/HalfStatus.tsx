@@ -21,6 +21,7 @@ function detail(half: HalfStatus, state: HalfState): string {
   const side = half.side === "left" ? "Left" : "Right";
   const extra = [
     half.build && `build ${half.build}`,
+    half.version !== null && `Tandem ${half.version}`,
     state === "setup" && "older firmware, the next update needs a key combo",
   ]
     .filter(Boolean)

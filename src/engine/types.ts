@@ -14,6 +14,7 @@ import type {
   RepoOption,
   RepoRef,
   Session,
+  UpdateHistory,
 } from "../../shared/types";
 
 export interface Caps {
@@ -53,6 +54,18 @@ export interface Engine {
   saveKeymap(keymap: Keymap): Promise<AppState>;
   saveSettings(settings: BuildSettings): Promise<AppState>;
   update(keymap?: Keymap): Promise<{ id: string }>;
+  /** Kept builds and Tandem's own commits, for going back. */
+  history(): Promise<UpdateHistory>;
+  /** Puts a kept build back on the keyboard. The repo stays as it is. */
+  flashBuild(key: string): Promise<{ id: string }>;
+  /** Undoes one of Tandem's commits, and leaves that release out of later updates. */
+  undoUpdate(sha: string): Promise<Session>;
+  /** Removes Tandem from the repo and puts Kinesis's firmware on the keyboard. */
+  leaveTandem(): Promise<{ id: string }>;
+  /** Makes a branch with the ZMK 4.1 port and switches to it. The next update builds it. */
+  startBeta(): Promise<{ session: Session; kept: string[] }>;
+  /** Switches back to the branch the trial started from. The next update puts it back. */
+  leaveBeta(): Promise<Session>;
   cancel(): Promise<{ ok: true }>;
   /** Asks the browser for access to the keyboard's ports. Call it from a click. */
   connectKeyboard(): Promise<void>;

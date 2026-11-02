@@ -54,6 +54,27 @@ export interface SetupStatus {
   changes: string[];
   /** Why setup can't run, if it can't. */
   blocker: string | null;
+  /** The Tandem release on this branch. Null before releases had numbers. */
+  version: number | null;
+  /** The Tandem release this site installs. */
+  latest: number | null;
+  /** The user undid this release, so updates leave it out. */
+  held: boolean;
+}
+
+/** Kinesis's changes that the next update would bring in. */
+export interface KinesisStatus {
+  /** The Kinesis commit this site syncs to. */
+  to: string;
+  /** Titles of Kinesis's commits the branch doesn't have, oldest first. */
+  commits: string[];
+  /** Files Kinesis and the user both changed in the same place, which stop the sync. */
+  conflicts: string[];
+  /** Files the sync leaves as the user has them, such as a changed layout. */
+  kept: string[];
+  /** The user undid this sync, so updates leave it out. */
+  held: boolean;
+  compareUrl: string;
 }
 
 export interface Session {
@@ -72,6 +93,10 @@ export interface Session {
   ghLogin: string | null;
   repo: (RepoRef & { url: string; head: string }) | null;
   setup: SetupStatus | null;
+  /** Kinesis's tested changes this branch doesn't have yet. */
+  kinesis: KinesisStatus | null;
+  /** On the ZMK 4.1 trial branch: the branch to go back to. */
+  beta: { from: string } | null;
   /** Finished onboarding, including the first flash. */
   onboarded: boolean;
   /** Why the last sign-in on GitHub didn't finish, shown once. */
@@ -130,6 +155,29 @@ export interface BuildRecord {
   right: string;
 }
 
+/** A firmware build kept on this computer, which can go back on the keyboard. */
+export interface KeptBuild {
+  key: string;
+  id: string;
+  createdAt: string;
+  /** Includes ZMK Studio, as Kinesis's Clique build does. */
+  studio: boolean;
+  /** Built without Tandem, when leaving it. Nothing can ask the halves if they run it. */
+  stock: boolean;
+}
+
+/** A commit Tandem made on its own, which the user can undo. */
+export interface UpdateCommit {
+  sha: string;
+  title: string;
+  date: string;
+}
+
+export interface UpdateHistory {
+  builds: KeptBuild[];
+  updates: UpdateCommit[];
+}
+
 export type Side = "left" | "right";
 
 export type HalfMode = "missing" | "app" | "bootloader";
@@ -146,6 +194,8 @@ export interface HalfStatus {
   repo: string | null;
   /** Tandem protocol version: 1 has info only, 2 adds the repo and the keymap. */
   protocol: number;
+  /** The Tandem release this half's firmware has. Null before releases had numbers. */
+  version: number | null;
   /** Tandem serial port, when present. */
   port: string | null;
   /** Mounted bootloader drive, in bootloader mode. */
@@ -206,6 +256,14 @@ export type JobEvent =
   /** This browser can't reach the keyboard: download both files and copy them by hand. */
   | { type: "manual-flash"; left: string; right: string }
   | { type: "manual-flash-done" }
+  /** This job puts a kept build back on the keyboard, and commits nothing. */
+  | { type: "rollback"; build: string }
+  /** This job removes Tandem from the repo and puts Kinesis's firmware on the keyboard. */
+  | { type: "leaving" }
+  /** Something the user should know about this update, which doesn't stop it. */
+  | { type: "note"; text: string }
+  /** The build of one of Tandem's own commits failed, and undoing that commit could fix it. */
+  | { type: "undoable"; commit: UpdateCommit }
   | { type: "done"; build: string; checked: boolean }
   | { type: "error"; message: string };
 

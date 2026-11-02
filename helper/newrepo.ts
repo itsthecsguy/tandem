@@ -1,5 +1,5 @@
-// Creates a keyboard config repo for someone who doesn't have one: Kinesis's
-// current config with Tandem added, in a fresh repo under their account. Not
+// Creates a keyboard config repo for someone who doesn't have one: the Kinesis
+// config Tandem tested with Tandem added, in a fresh repo under their account. Not
 // a fork, because GitHub allows one fork per repo network per account, and
 // anyone who already forked Kinesis's repo would just get their old fork back.
 
@@ -11,9 +11,11 @@ import type { Layer, LayoutKey, RepoRef } from "../shared/types";
 import type { GitHub } from "./github";
 import { importKeymap, replaceLayers } from "../shared/keymap";
 import { readLayout } from "../shared/layout";
-import { KEYMAP_PATH, WORKFLOW_PATH, moduleFiles, patchWorkflow } from "./setup";
+import pins from "../shared/pins.json";
+import { KINESIS_BASE_PATH } from "../shared/sync";
+import { KEYMAP_PATH, MANIFEST_PATH, WORKFLOW_PATH, moduleFiles, patchManifest, patchWorkflow } from "./setup";
 
-export const TEMPLATE = { owner: "KinesisCorporation", name: "Adv360-Pro-ZMK", ref: "V3.0" };
+export const TEMPLATE = { owner: "KinesisCorporation", name: "Adv360-Pro-ZMK", ref: pins.kinesis.sha };
 
 interface RepoFile {
   path: string;
@@ -68,6 +70,9 @@ export async function templateFiles(gh: GitHub, options: Omit<NewRepoOptions, "n
     if (!patched) throw new Error("Kinesis's build workflow changed shape, so Tandem can't add itself to it");
     byPath.get(WORKFLOW_PATH)!.data = Buffer.from(patched);
 
+    const manifest = text(MANIFEST_PATH);
+    if (manifest) byPath.get(MANIFEST_PATH)!.data = Buffer.from(patchManifest(manifest));
+
     const { rows } = readLayout(text("config/info.json") ?? "");
     let keymap = text(KEYMAP_PATH);
     if (!keymap) throw new Error(`Kinesis's config has no ${KEYMAP_PATH}`);
@@ -76,6 +81,7 @@ export async function templateFiles(gh: GitHub, options: Omit<NewRepoOptions, "n
     byPath.get(KEYMAP_PATH)!.data = Buffer.from(importKeymap(keymap, rows).text);
 
     for (const f of await moduleFiles()) byPath.set(f.path, { path: f.path, data: Buffer.from(f.content), executable: false });
+    byPath.set(KINESIS_BASE_PATH, { path: KINESIS_BASE_PATH, data: Buffer.from(`${TEMPLATE.ref}\n`), executable: false });
     return [...byPath.values()];
   } finally {
     await rm(tmp, { recursive: true, force: true });

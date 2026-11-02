@@ -4,7 +4,8 @@
 //                        commit's short SHA as the build ID the halves report.
 //                        `west update` makes shallow clones, cached under a
 //                        key of Tandem's own.
-//   west manifest        fetches only the modules the firmware builds from
+//   west manifest        fetches only the modules the firmware builds from, at
+//                        the commits this release of Tandem was tested with
 //   keymap               a global &lt quick-tap override becomes Tandem's &ltr
 //
 // The browser and the helper both use this. Each passes in the module's files,
@@ -12,9 +13,13 @@
 
 import { importKeymap } from "./keymap";
 import { readLayout } from "./layout";
+import pins from "./pins.json";
 import type { SetupStatus } from "./types";
 
 export const MODULE_PATH = "tandem/zmk-tandem";
+export const VERSION_PATH = `${MODULE_PATH}/version.txt`;
+/** Releases the user undid, so an update doesn't put them straight back. */
+export const HOLD_PATH = "tandem/hold.json";
 export const WORKFLOW_PATH = ".github/workflows/build.yml";
 export const KEYMAP_PATH = "config/adv360.keymap";
 export const MANIFEST_PATH = "config/west.yml";
@@ -39,8 +44,15 @@ const TANDEM_RESTORE_KEY = "${{ runner.os }}-build-${{ env.cache-name }}-tandem-
 // apart from the date and commit Kinesis's version macro types. Checked
 // against one ZMK revision only: another may need other modules, so its
 // manifest stays as Kinesis wrote it.
-const CHECKED_ZMK = "adv360-z3.5-2";
 const MODULES = ["zephyr", "cmsis", "hal_nordic", "tinycrypt", "lvgl", "segger", "nanopb", "zmk-studio-messages"];
+const ZEPHYR_MODULES = MODULES.filter((m) => ["cmsis", "hal_nordic", "tinycrypt", "lvgl", "segger"].includes(m));
+
+// Kinesis's manifest and workflow follow two branches and a Docker tag, so one
+// commit can build different firmware from one day to the next. Tandem pins
+// them to what it tested. See shared/pins.json.
+const PIN_NOTE = `# Tandem's tested commit of`;
+const ZEPHYR_NOTE = `# Tandem's tested commit of ${pins.zephyr.branch}`;
+const IMAGE = `${pins.image.name}:${pins.image.tag}`;
 
 const BUILD_FLAGS = [
   `-DZMK_EXTRA_MODULES="\${GITHUB_WORKSPACE}/${MODULE_PATH}"`,
@@ -73,6 +85,7 @@ export function unpatchWorkflow(text: string): string {
     }
     out.push(
       lines[i]
+        .replace(new RegExp(`^(\\s*image: ${IMAGE})@sha256:[0-9a-f]+\\s*$`), "$1")
         .replace(/ -DZMK_EXTRA_MODULES="\$\{GITHUB_WORKSPACE\}\/tandem\/zmk-tandem".*?build-id\.conf"/, "")
         .replace(new RegExp(`^(\\s*run: )${SHALLOW_UPDATE}\\s*$`), `$1${WEST_UPDATE}`)
         .replace(`key: ${TANDEM_CACHE_KEY}`, `key: ${CACHE_KEY}`),
@@ -95,6 +108,10 @@ export function patchWorkflow(original: string): string | null {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (line.trim() === `image: ${IMAGE}`) {
+      out.push(`${line}@${pins.image.digest}`);
+      continue;
+    }
     // Write the build ID and repo right before each job restores its west cache.
     const cache = /^(\s*)- name: Cache west modules\s*$/.exec(line);
     if (cache) {
@@ -136,23 +153,51 @@ export function patchWorkflow(original: string): string | null {
   return builds > 0 && idSteps > 0 ? out.join("\n") : null;
 }
 
-/** Puts the west manifest's ZMK import back the way Kinesis wrote it. */
+const ZEPHYR_PROJECT = (indent: string) =>
+  [
+    `${indent}- name: zephyr ${ZEPHYR_NOTE}`,
+    `${indent}  remote: zmkfirmware`,
+    `${indent}  revision: ${pins.zephyr.sha}`,
+    `${indent}  import:`,
+    `${indent}    name-allowlist:`,
+    ...ZEPHYR_MODULES.map((m) => `${indent}      - ${m}`),
+  ].join("\n");
+
+/** Puts the west manifest's ZMK project back the way Kinesis wrote it. */
 export function unpatchManifest(text: string): string {
-  return text.replace(/^( *)import:\n\1  file: app\/west\.yml\n\1  name-allowlist:(?:\n\1    - [\w-]+)+$/m, "$1import: app/west.yml");
+  return text
+    .replace(/^( *)- name: zephyr # Tandem's tested commit of \S+\n(?:\1  .*\n)+/m, "")
+    .replace(/^( *)revision: [0-9a-f]{40} # Tandem's tested commit of (\S+)$/m, "$1revision: $2")
+    .replace(/^( *)import:\n\1  file: app\/west\.yml\n\1  name-allowlist:(?:\n\1    - [\w-]+)+$/m, "$1import: app/west.yml");
 }
 
 /**
- * Has the west manifest fetch only the modules the firmware builds from, for
- * the ZMK revision that list was checked against. Any other manifest comes
- * back as Kinesis wrote it, without an allowlist from an older Tandem.
+ * Has the west manifest fetch only the modules the firmware builds from, at
+ * the commits Tandem tested, for the ZMK revision those were checked against.
+ * Any other manifest comes back as Kinesis wrote it, without an allowlist or a
+ * pin from an older Tandem.
  */
 export function patchManifest(original: string): string {
   const text = unpatchManifest(original);
-  const zmkImport = /^( *)import: app\/west\.yml$/gm;
-  if (!new RegExp(`^\\s*revision: ${CHECKED_ZMK}\\s*$`, "m").test(text) || text.match(zmkImport)?.length !== 1) return text;
-  return text.replace(zmkImport, (_, indent: string) =>
-    [`${indent}import:`, `${indent}  file: app/west.yml`, `${indent}  name-allowlist:`, ...MODULES.map((m) => `${indent}    - ${m}`)].join("\n"),
-  );
+  // Exactly Kinesis's ZMK project, from Kinesis's remote. Someone's own fork of
+  // ZMK can have a branch of the same name, and Tandem's pin isn't on it.
+  const zmk = new RegExp(`^( *)- name: zmk\\n\\1  remote: ${pins.zmk.repo.split("/")[0]}\\n\\1  revision: ${pins.zmk.branch}\\s*\\n\\1  import: app/west\\.yml$`, "m");
+  const projects = /^( *)projects:\n( *)(?=- )/m;
+  // The pin for Zephyr needs Kinesis's remote for it, and to be the only Zephyr project.
+  if (!zmk.test(text) || !projects.test(text) || !/^ *- name: zmkfirmware$/m.test(text) || /^ *- name: zephyr\b/m.test(text)) return text;
+  return text
+    .replace(zmk, (_, indent: string) =>
+      [
+        `${indent}- name: zmk`,
+        `${indent}  remote: ${pins.zmk.repo.split("/")[0]}`,
+        `${indent}  revision: ${pins.zmk.sha} ${PIN_NOTE} ${pins.zmk.branch}`,
+        `${indent}  import:`,
+        `${indent}    file: app/west.yml`,
+        `${indent}    name-allowlist:`,
+        ...MODULES.map((m) => `${indent}      - ${m}`),
+      ].join("\n"),
+    )
+    .replace(projects, (m, _, indent: string) => `${m}${ZEPHYR_PROJECT(indent).trimStart()}\n${indent}`);
 }
 
 export interface RepoFiles {
@@ -161,6 +206,27 @@ export interface RepoFiles {
   keymap: string | null;
   info: string | null;
   module: Map<string, string | null>;
+  hold?: string | null;
+}
+
+/** The release a set of module files is. Older releases have no version file. */
+export function moduleVersion(text: string | null | undefined): number | null {
+  const version = Number.parseInt(text ?? "", 10);
+  return Number.isNaN(version) ? null : version;
+}
+
+/** Which releases the user undid: Tandem's by version, Kinesis's by commit. */
+export interface Hold {
+  tandem?: number;
+  kinesis?: string;
+}
+
+export function readHold(text: string | null | undefined): Hold {
+  try {
+    return (JSON.parse(text ?? "{}") as Hold) ?? {};
+  } catch {
+    return {};
+  }
 }
 
 /** What the setup commit would change, given the repo's files and the module Tandem ships. */
@@ -208,12 +274,17 @@ export function setupPlan(repo: RepoFiles, mine: RepoFile[]): { status: SetupSta
 
   // Any earlier version of Tandem counts as present, so it shows as an update.
   const present = [...repo.module.values()].some((v) => v !== null) || !!repo.workflow?.includes(MODULE_PATH);
+  const outdated = present && (moduleChanged || workflowChanged || manifestChanged);
+  const latest = moduleVersion(mine.find((f) => f.path === VERSION_PATH)?.content);
   return {
     status: {
       installed: present && !moduleChanged && !workflowChanged && !manifestChanged,
-      outdated: present && (moduleChanged || workflowChanged || manifestChanged),
+      outdated,
       changes: files.map((f) => f.path),
       blocker,
+      version: moduleVersion(repo.module.get(VERSION_PATH)),
+      latest,
+      held: outdated && latest !== null && readHold(repo.hold).tandem === latest,
     },
     files,
   };
@@ -222,6 +293,14 @@ export function setupPlan(repo: RepoFiles, mine: RepoFile[]): { status: SetupSta
 /** The setup commit's message, for adding Tandem or replacing an older version. */
 export function setupMessage(status: SetupStatus): string {
   return status.outdated
-    ? "Update Tandem\n\nReplaces the zmk-tandem firmware module, and Tandem's changes to the build\nand keymap, with the latest version."
+    ? `Update Tandem${status.latest === null ? "" : ` to release ${status.latest}`}\n\nReplaces the zmk-tandem firmware module, and Tandem's changes to the build\nand keymap, with the latest version.`
     : "Add Tandem automatic updates\n\nAdds the zmk-tandem firmware module, builds it in every firmware build, and\nmoves the keymap's repeat-on-tap-then-hold keys to Tandem's &ltr behavior.";
+}
+
+/** What an update's commit step says it did. A layout alone needs no explaining. */
+export function committedDetail(sha: string, what: { layout: boolean; kinesis: boolean; tandem: boolean }): string {
+  const parts = [what.layout && "your layout", what.kinesis && "Kinesis's changes", what.tandem && "Tandem's update"].filter((p): p is string => !!p);
+  if (!what.kinesis && !what.tandem) return `Committed ${sha.slice(0, 7)}`;
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
+  return `Committed ${list}, ${sha.slice(0, 7)}`;
 }

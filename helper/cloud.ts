@@ -3,10 +3,10 @@
 // downloads that job's artifact as soon as the job finishes.
 
 import { existsSync } from "node:fs";
-import { readFile, rename } from "node:fs/promises";
+import { readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { BuildRecord, BuildSettings, JobEvent } from "../shared/types";
+import type { BuildRecord, BuildSettings, JobEvent, KeptBuild } from "../shared/types";
 import { type RunJob, type WorkflowRun } from "./github";
 import { BUILDS_DIR, github, loadState } from "./workspace";
 
@@ -44,13 +44,46 @@ export function cachedBuild(sha: string, settings: BuildSettings): BuildRecord |
   return existsSync(left) && existsSync(right) ? { id, createdAt: "", left, right } : null;
 }
 
+// Marks a build made without Tandem, which nothing can ask about after flashing.
+const STOCK_MARK = "stock";
+
+/** The builds kept on disk, newest first. */
+export async function keptBuilds(): Promise<KeptBuild[]> {
+  const names = await readdir(BUILDS_DIR).catch(() => [] as string[]);
+  const kept = await Promise.all(
+    names
+      .filter((key) => keptBuild(key))
+      .map(async (key) => ({
+        key,
+        id: key.slice(0, 7),
+        createdAt: (await stat(join(BUILDS_DIR, key))).mtime.toISOString(),
+        studio: key.endsWith("-firmware-clique"),
+        stock: existsSync(join(BUILDS_DIR, key, STOCK_MARK)),
+      })),
+  );
+  return kept.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function isStock(key: string): boolean {
+  return existsSync(join(BUILDS_DIR, key, STOCK_MARK));
+}
+
+export function keptBuild(key: string): BuildRecord | null {
+  const left = join(BUILDS_DIR, key, "left.uf2");
+  const right = join(BUILDS_DIR, key, "right.uf2");
+  return existsSync(left) && existsSync(right) ? { id: key.slice(0, 7), createdAt: "", left, right } : null;
+}
+
+/** GitHub built the commit and it failed, as opposed to Tandem losing track of it. */
+export class BuildFailed extends Error {}
+
 function describe(job: RunJob | undefined): string {
   if (!job || job.status === "queued") return "Waiting for a GitHub runner";
   const step = job.steps?.find((s) => s.status === "in_progress");
   return step ? `On GitHub: ${step.name}` : "Running on GitHub";
 }
 
-export async function cloudBuild(sha: string, settings: BuildSettings, emit: Emit, signal: AbortSignal): Promise<BuildRecord> {
+export async function cloudBuild(sha: string, settings: BuildSettings, emit: Emit, signal: AbortSignal, options: { stock?: boolean } = {}): Promise<BuildRecord> {
   const gh = await github();
   const { repo } = await loadState();
   if (!repo) throw new Error("Choose a keyboard repo first");
@@ -80,7 +113,7 @@ export async function cloudBuild(sha: string, settings: BuildSettings, emit: Emi
     if (job?.status === "completed" || (!job && run.status === "completed")) {
       const conclusion = job ? job.conclusion : run.conclusion;
       if (conclusion !== "success") {
-        throw new Error(`The firmware build failed on GitHub (${conclusion}). Open the run to see why.`);
+        throw new BuildFailed(`The firmware build failed on GitHub (${conclusion}). Open the run to see why.`);
       }
       break;
     }
@@ -108,6 +141,7 @@ export async function cloudBuild(sha: string, settings: BuildSettings, emit: Emi
     if (head !== "UF2\n") throw new Error(`The ${side} firmware isn't a UF2 file.`);
   }
   emit({ type: "step", step: "download", state: "done", detail: `${Math.round(artifact.size_in_bytes / 1024)} KB` });
+  if (options.stock) await writeFile(join(dir, STOCK_MARK), "");
 
   return { id, createdAt: new Date().toISOString(), left: join(dir, "left.uf2"), right: join(dir, "right.uf2") };
 }

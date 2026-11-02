@@ -44,6 +44,12 @@ export function helperEngine(): Engine {
     saveSettings: (settings) => call("PUT", "/api/settings", settings),
     update: (keymap) => call("POST", "/api/update", { keymap }),
     cancel: () => call("POST", "/api/update/cancel"),
+    history: () => call("GET", "/api/history"),
+    flashBuild: (key) => call("POST", "/api/history/flash", { key }),
+    undoUpdate: (sha) => call("POST", "/api/history/undo", { sha }),
+    leaveTandem: () => call("POST", "/api/history/leave"),
+    startBeta: () => call("POST", "/api/beta/start"),
+    leaveBeta: () => call("POST", "/api/beta/leave"),
     // The helper finds the halves over USB and copies firmware itself.
     connectKeyboard: async () => {},
     allowUpdatePort: async () => false,

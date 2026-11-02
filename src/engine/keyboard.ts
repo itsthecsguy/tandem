@@ -32,7 +32,7 @@ export interface KeyboardAccess {
 }
 
 export function emptyHalf(side: Side): HalfStatus {
-  return { side, mode: "missing", serial: null, autoflash: false, build: null, repo: null, protocol: 0, port: null, volume: null, otherPorts: [] };
+  return { side, mode: "missing", serial: null, autoflash: false, build: null, repo: null, protocol: 0, version: null, port: null, volume: null, otherPorts: [] };
 }
 
 export function noKeyboard(): KeyboardAccess {

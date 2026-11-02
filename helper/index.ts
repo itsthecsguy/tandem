@@ -13,7 +13,8 @@ import { streamSSE } from "hono/streaming";
 import type { AppState, BuildSettings, DevicesStatus, Keymap, RepoRef } from "../shared/types";
 import { scanDevices } from "./devices";
 import { type DeviceCode, finishDeviceFlow, startDeviceFlow } from "./github";
-import { cancelJob, currentJob, onJobStart, startUpdate } from "./jobs";
+import { keptBuilds } from "./cloud";
+import { cancelJob, currentJob, onJobStart, startLeaving, startRollback, startUpdate } from "./jobs";
 import { keyboardInfo, pendingLayout, readKeyboardLayout } from "./keyboard";
 import {
   APP_DIR,
@@ -22,6 +23,7 @@ import {
   currentBuildId,
   disconnectRepo,
   installTandem,
+  leaveBeta,
   listBranches,
   listRepos,
   loadState,
@@ -31,6 +33,9 @@ import {
   saveState,
   session,
   signOut,
+  startBeta,
+  undoUpdate,
+  updateHistory,
   useGhLogin,
 } from "./workspace";
 
@@ -38,6 +43,16 @@ const PORT = Number(process.env.PORT ?? 4317);
 const app = new Hono();
 
 app.onError((err, c) => c.json({ error: err.message }, 500));
+
+// Any web page can send a POST here, and browsers say which page sent it. These
+// can commit to GitHub and flash the keyboard, so only this computer's pages may.
+app.use("/api/*", async (c, next) => {
+  const origin = c.req.header("origin");
+  if (c.req.method !== "GET" && origin && !["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname)) {
+    return c.json({ error: "Wrong origin" }, 403);
+  }
+  await next();
+});
 
 // The UI asks this to learn that a helper serves it, not tandemkb.com.
 app.get("/api/engine", (c) => c.json({ engine: "helper" }));
@@ -170,6 +185,39 @@ app.post("/api/update/cancel", (c) => {
 });
 
 app.get("/api/update", (c) => c.json(currentJob()?.snapshot() ?? null));
+
+// Going back
+
+app.get("/api/history", async (c) => {
+  const [builds, updates] = await Promise.all([keptBuilds(), updateHistory()]);
+  return c.json({ builds, updates });
+});
+
+app.post("/api/history/flash", async (c) => {
+  const { key } = await c.req.json<{ key: string }>();
+  return c.json({ id: startRollback(key).id });
+});
+
+app.post("/api/history/undo", async (c) => {
+  const { sha } = await c.req.json<{ sha: string }>();
+  await undoUpdate(sha);
+  return c.json(await session());
+});
+
+app.post("/api/history/leave", (c) => c.json({ id: startLeaving().id }));
+
+// The ZMK 4.1 trial
+
+app.post("/api/beta/start", async (c) => {
+  const kept = await startBeta();
+  return c.json({ session: await session(), kept });
+});
+
+app.post("/api/beta/leave", async (c) => {
+  const { beta } = await session();
+  if (beta) await leaveBeta(beta.from);
+  return c.json(await session());
+});
 
 // One stream for everything live: device status and update progress.
 app.get("/api/events", (c) =>

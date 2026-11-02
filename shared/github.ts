@@ -133,20 +133,85 @@ export class GitHubApi {
     files: { path: string; content: string }[],
     message: string,
   ): Promise<string> {
+    return this.commitChanges(owner, repo, branch, parent, files, message);
+  }
+
+  /**
+   * Commits changes on top of `parent`, each one new text, a blob the repo
+   * already has, or a deletion. `merged` adds parents, for a merge commit.
+   */
+  async commitChanges(
+    owner: string,
+    repo: string,
+    branch: string,
+    parent: string,
+    changes: TreeChange[],
+    message: string,
+    merged: string[] = [],
+  ): Promise<string> {
+    const sha = await this.makeCommit(owner, repo, parent, changes, message, merged);
+    // Not forced: if the branch moved since `parent`, GitHub rejects this.
+    await this.json("PATCH", `/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`, { sha, force: false });
+    return sha;
+  }
+
+  /** Makes a commit that no branch points to yet. Returns its SHA. */
+  async makeCommit(owner: string, repo: string, parent: string, changes: TreeChange[], message: string, merged: string[] = []): Promise<string> {
     const base = `/repos/${owner}/${repo}/git`;
     const parentCommit = await this.json<{ tree: { sha: string } }>("GET", `${base}/commits/${parent}`);
-    const tree = await this.json<{ sha: string }>("POST", `${base}/trees`, {
-      base_tree: parentCommit.tree.sha,
-      tree: files.map((f) => ({ path: f.path, mode: "100644", type: "blob", content: f.content })),
-    });
-    const commit = await this.json<{ sha: string }>("POST", `${base}/commits`, {
-      message,
-      tree: tree.sha,
-      parents: [parent],
-    });
-    // Not forced: if the branch moved since `parent`, GitHub rejects this.
-    await this.json("PATCH", `${base}/refs/heads/${encodeURIComponent(branch)}`, { sha: commit.sha, force: false });
+    // GitHub refuses a new tree with no entries. With no changes, the tree is the parent's.
+    const tree = changes.length
+      ? await this.json<{ sha: string }>("POST", `${base}/trees`, {
+          base_tree: parentCommit.tree.sha,
+          tree: changes.map(({ path, mode, ...what }) => ({ path, mode: mode ?? "100644", type: "blob", ...what })),
+        })
+      : parentCommit.tree;
+    const commit = await this.json<{ sha: string }>("POST", `${base}/commits`, { message, tree: tree.sha, parents: [parent, ...merged] });
     return commit.sha;
+  }
+
+  /** Every file in a commit, by path. */
+  async tree(owner: string, repo: string, ref: string): Promise<Map<string, TreeEntry>> {
+    const res = await this.json<{ tree: (TreeEntry & { type: string })[]; truncated: boolean }>(
+      "GET",
+      `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+    );
+    if (res.truncated) throw new Error(`${owner}/${repo} has too many files for GitHub to list.`);
+    return new Map(res.tree.filter((e) => e.type === "blob").map((e) => [e.path, { path: e.path, mode: e.mode, sha: e.sha }]));
+  }
+
+  async blob(owner: string, repo: string, sha: string): Promise<Uint8Array> {
+    const res = await this.json<{ content: string }>("GET", `/repos/${owner}/${repo}/git/blobs/${sha}`);
+    return fromBase64(res.content);
+  }
+
+  async putBlob(owner: string, repo: string, data: Uint8Array): Promise<string> {
+    const res = await this.json<{ sha: string }>("POST", `/repos/${owner}/${repo}/git/blobs`, { content: toBase64(data), encoding: "base64" });
+    return res.sha;
+  }
+
+  /** Creates a branch at a commit. */
+  async createBranch(owner: string, repo: string, branch: string, sha: string): Promise<void> {
+    await this.json("POST", `/repos/${owner}/${repo}/git/refs`, { ref: `refs/heads/${branch}`, sha });
+  }
+
+  /** A branch's latest commits, newest first. */
+  async history(owner: string, repo: string, branch: string, count: number): Promise<CommitSummary[]> {
+    const list = await this.json<RawCommit[]>("GET", `/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(branch)}&per_page=${count}`);
+    return list.map(summarizeCommit);
+  }
+
+  async commitOf(owner: string, repo: string, sha: string): Promise<CommitSummary> {
+    return summarizeCommit(await this.json<RawCommit>("GET", `/repos/${owner}/${repo}/commits/${sha}`));
+  }
+
+  /** How `head` relates to `base`. Across a fork network, `head` is `owner:branch`. */
+  async compare(owner: string, repo: string, base: string, head: string): Promise<Comparison> {
+    const res = await this.json<{ status: string; behind_by: number; ahead_by: number; merge_base_commit: { sha: string }; commits: RawCommit[] }>(
+      "GET",
+      `/repos/${owner}/${repo}/compare/${encodeURIComponent(base)}...${head.split(":").map(encodeURIComponent).join(":")}`,
+    );
+    return { status: res.status, behindBy: res.behind_by, aheadBy: res.ahead_by, mergeBase: res.merge_base_commit.sha, commits: res.commits.map(summarizeCommit) };
   }
 
   /** The build for a commit: from its push, or started by hand for it. */
@@ -250,11 +315,48 @@ export class GitHubApi {
   }
 }
 
+export interface TreeEntry {
+  path: string;
+  mode: string;
+  sha: string;
+}
+
+/** One file's change in a commit: new text, a blob the repo has, or null to delete it. */
+export type TreeChange = { path: string; mode?: string } & ({ content: string } | { sha: string | null });
+
+interface RawCommit {
+  sha: string;
+  commit: { message: string; committer: { date: string } | null };
+  parents: { sha: string }[];
+}
+
+export interface CommitSummary {
+  sha: string;
+  message: string;
+  title: string;
+  date: string;
+  parents: string[];
+}
+
+function summarizeCommit(c: RawCommit): CommitSummary {
+  return { sha: c.sha, message: c.commit.message, title: c.commit.message.split("\n")[0], date: c.commit.committer?.date ?? "", parents: c.parents.map((p) => p.sha) };
+}
+
+export interface Comparison {
+  status: string;
+  behindBy: number;
+  aheadBy: number;
+  mergeBase: string;
+  commits: CommitSummary[];
+}
+
 interface RawRepo {
   name: string;
   full_name: string;
   owner: { login: string };
   fork: boolean;
+  /** The top of the fork network. Only answers about one repo have it. */
+  source?: { full_name: string };
   private: boolean;
   default_branch: string;
   html_url: string;
@@ -267,6 +369,8 @@ export interface RepoSummary {
   name: string;
   fullName: string;
   fork: boolean;
+  /** The repo at the top of its fork network, when GitHub says. */
+  source: string | null;
   private: boolean;
   defaultBranch: string;
   url: string;
@@ -280,6 +384,7 @@ function summarize(r: RawRepo): RepoSummary {
     name: r.name,
     fullName: r.full_name,
     fork: r.fork,
+    source: r.source?.full_name ?? null,
     private: r.private,
     defaultBranch: r.default_branch,
     url: r.html_url,

@@ -1,4 +1,4 @@
-import type { JobSnapshot, Side, StepId, StepState } from "../../shared/types";
+import type { JobSnapshot, Side, StepId, StepState, UpdateCommit } from "../../shared/types";
 
 export const STEP_ORDER: StepId[] = ["save", "build", "download", "prepare", "flash-right", "flash-left", "verify"];
 
@@ -29,6 +29,12 @@ export interface HandSteps {
 const fresh = (): HandSteps => ({ keys: "todo", keysBy: null, allow: "todo", port: "todo" });
 
 export interface JobView {
+  /** A usual update, a kept build going back on, or going back to Kinesis's firmware. */
+  kind: "update" | "rollback" | "leaving";
+  /** Things to know about this update that didn't stop it. */
+  notes: string[];
+  /** The build failed, and undoing this commit of Tandem's could fix it. */
+  undoable: UpdateCommit | null;
   steps: Record<StepId, { state: StepState; detail?: string }>;
   manual: { side: Side; reason: "no-autoflash" | "no-response" } | null;
   plugIn: Side | null;
@@ -60,6 +66,9 @@ export interface JobView {
 
 export function viewJob(job: JobSnapshot): JobView {
   const view: JobView = {
+    kind: "update",
+    notes: [],
+    undoable: null,
     steps: Object.fromEntries(STEP_ORDER.map((s) => [s, { state: "pending" }])) as JobView["steps"],
     manual: null,
     plugIn: null,
@@ -100,6 +109,18 @@ export function viewJob(job: JobSnapshot): JobView {
         break;
       case "log":
         view.logs.push(e.line);
+        break;
+      case "rollback":
+        view.kind = "rollback";
+        break;
+      case "leaving":
+        view.kind = "leaving";
+        break;
+      case "note":
+        view.notes.push(e.text);
+        break;
+      case "undoable":
+        view.undoable = e.commit;
         break;
       case "run":
         view.runUrl = e.url;

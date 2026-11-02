@@ -7,13 +7,16 @@
 //   ?demo=intro        the setup screen before Start
 //   ?demo=trust        a keyboard with Tandem firmware in a browser that hasn't updated it yet
 //   ?demo=repo, ?demo=install   onboarding's layout step
+//   ?demo=outdated     the banners for a newer Tandem and for Kinesis's changes
+//   ?demo=held         the banner after undoing a release, and for Kinesis changes that clash
+//   ?demo=history      Versions and undo (&beta adds the ZMK 4.1 trial)
 //   ?demo=<scenario>   the update sheet frozen at one moment, from `scenarios` below
 
 import infoJson from "../../template/config/info.json?raw";
 import keymapText from "../../template/config/adv360.keymap?raw";
 import { parseKeymap, toKeymap } from "../../shared/keymap";
 import { readLayout } from "../../shared/layout";
-import type { AppState, DevicesStatus, HalfStatus, JobAction, JobEvent, JobSnapshot, Session, Side } from "../../shared/types";
+import type { AppState, DevicesStatus, HalfStatus, JobAction, JobEvent, JobSnapshot, Session, Side, UpdateHistory } from "../../shared/types";
 import { emptyHalf } from "../engine/keyboard";
 import type { Engine, LiveEvent } from "../engine/types";
 
@@ -47,6 +50,46 @@ const rightConnected: JobEvent[] = [
 ];
 
 const scenarios: Record<string, { running: boolean; events: JobEvent[] }> = {
+  // A build of Tandem's own commit failed, so the sheet offers to undo it.
+  buildfailed: {
+    running: false,
+    events: [
+      { type: "step", step: "save", state: "done", detail: `Committed Tandem's update, ${BUILD}` },
+      { type: "run", url: "https://github.com/octocat/Adv360-Pro-ZMK/actions" },
+      { type: "step", step: "build", state: "active", detail: "On GitHub: West Build (left)" },
+      { type: "undoable", commit: { sha: `${BUILD}000000000000000000000000000000000`, title: "Update Tandem to release 4", date: "2026-11-01T10:28:00Z" } },
+      { type: "error", message: "The firmware build failed on GitHub (failure). Open the run to see why." },
+    ],
+  },
+  rollback: {
+    running: false,
+    events: [
+      { type: "rollback", build: "8e11c40" },
+      { type: "step", step: "save", state: "skipped", detail: "Your repo stays as it is" },
+      { type: "step", step: "build", state: "skipped", detail: "Already built 8e11c40" },
+      { type: "step", step: "download", state: "skipped", detail: "Kept in this browser" },
+      { type: "step", step: "prepare", state: "done", detail: "Both halves run Tandem firmware" },
+      { type: "step", step: "flash-right", state: "done", detail: "Running 8e11c40" },
+      { type: "step", step: "flash-left", state: "done", detail: "Running 8e11c40" },
+      { type: "step", step: "verify", state: "done", detail: "Both halves run 8e11c40" },
+      { type: "done", build: "8e11c40", checked: true },
+    ],
+  },
+  left: {
+    running: false,
+    events: [
+      { type: "leaving" },
+      { type: "step", step: "save", state: "done", detail: `Committed ${BUILD}` },
+      { type: "run", url: "https://github.com/octocat/Adv360-Pro-ZMK/actions" },
+      { type: "step", step: "build", state: "done", detail: `Built ${BUILD}` },
+      { type: "step", step: "download", state: "done", detail: "323 KB" },
+      { type: "step", step: "prepare", state: "done", detail: "Both halves run Tandem firmware" },
+      { type: "step", step: "flash-right", state: "done", detail: "Firmware sent" },
+      { type: "step", step: "flash-left", state: "done", detail: "Firmware sent" },
+      { type: "step", step: "verify", state: "skipped", detail: "Kinesis's firmware can't report its build" },
+      { type: "done", build: BUILD, checked: false },
+    ],
+  },
   setup: {
     running: true,
     events: [...base, { type: "step", step: "flash-left", state: "active", detail: "Waiting for update mode" }, { type: "manual", side: "left", reason: "no-autoflash" }],
@@ -180,6 +223,8 @@ const signedIn: Session = {
   ghLogin: "octocat",
   repo: null,
   setup: null,
+  kinesis: null,
+  beta: null,
   onboarded: false,
 };
 
@@ -187,10 +232,43 @@ const withRepo = (installed: boolean, onboarded: boolean): Session => ({
   ...signedIn,
   repo: { ...repo, url: "https://github.com/octocat/Adv360-Pro-ZMK/tree/main", head: BUILD },
   setup: installed
-    ? { installed: true, outdated: false, changes: [], blocker: null }
-    : { installed: false, outdated: false, changes: ["tandem/zmk-tandem/Kconfig", ".github/workflows/build.yml", "config/adv360.keymap"], blocker: null },
+    ? { installed: true, outdated: false, changes: [], blocker: null, version: 4, latest: 4, held: false }
+    : {
+        installed: false,
+        outdated: false,
+        changes: ["tandem/zmk-tandem/Kconfig", ".github/workflows/build.yml", "config/adv360.keymap"],
+        blocker: null,
+        version: null,
+        latest: 4,
+        held: false,
+      },
   onboarded,
 });
+
+const outdated = (held: boolean): Session => ({
+  ...withRepo(true, true),
+  setup: { installed: false, outdated: true, changes: ["tandem/zmk-tandem/src/reconnect.c"], blocker: null, version: 3, latest: 4, held },
+  kinesis: {
+    to: "97f5d7394d36f60754a483bf5551e16d996fe406",
+    commits: ["fix(ci): correct cache key path for west manifest (#832)"],
+    conflicts: held ? ["config/boards/arm/adv360/adv360_left_defconfig"] : [],
+    kept: held ? [] : ["config/adv360.keymap"],
+    held: false,
+    compareUrl: "https://github.com/KinesisCorporation/Adv360-Pro-ZMK/compare/081b8f9...97f5d73",
+  },
+});
+
+const demoHistory: UpdateHistory = {
+  builds: [
+    { key: `${BUILD}-firmware-clique`, id: BUILD, createdAt: "2026-11-01T10:30:00Z", studio: true, stock: false },
+    { key: "8e11c40-firmware-clique", id: "8e11c40", createdAt: "2026-10-29T17:02:00Z", studio: true, stock: false },
+    { key: "c04d7aa-firmware-no-clique", id: "c04d7aa", createdAt: "2026-10-23T09:12:00Z", studio: false, stock: false },
+  ],
+  updates: [
+    { sha: `${BUILD}000000000000000000000000000000000`, title: "Update Tandem to release 4", date: "2026-11-01T10:28:00Z" },
+    { sha: "b12ee9f000000000000000000000000000000000", title: "Sync with Kinesis 97f5d73", date: "2026-11-01T10:28:00Z" },
+  ],
+};
 
 /** The demo asked for in the URL, if any. */
 export function demoName(): string | null {
@@ -207,6 +285,7 @@ const tandemHalf = (side: Side): HalfStatus => ({
   build: BUILD,
   repo: "octocat/Adv360-Pro-ZMK",
   protocol: 2,
+  version: 4,
   port: "web-serial",
 });
 
@@ -233,7 +312,15 @@ export function demoEngine(real: Engine): Engine {
   }
 
   let session: Session =
-    name === "repo" ? signedIn : name === "install" ? withRepo(false, false) : walkthrough ? withRepo(true, false) : withRepo(true, true);
+    name === "repo"
+      ? signedIn
+      : name === "install"
+        ? withRepo(false, false)
+        : walkthrough
+          ? withRepo(true, false)
+          : name === "outdated" || name === "held"
+            ? outdated(name === "held")
+            : withRepo(true, true);
 
   const layout = readLayout(infoJson);
   const state: AppState = {
@@ -389,6 +476,22 @@ export function demoEngine(real: Engine): Engine {
     }),
     state: async () => state,
     saveKeymap: async (keymap) => ({ ...state, keymap }),
+    history: async () => demoHistory,
+    flashBuild: async () => {
+      throw new Error("Demo mode doesn't send changes.");
+    },
+    undoUpdate: async () => {
+      throw new Error("Demo mode doesn't send changes.");
+    },
+    leaveTandem: async () => {
+      throw new Error("Demo mode doesn't send changes.");
+    },
+    startBeta: async () => {
+      throw new Error("Demo mode doesn't send changes.");
+    },
+    leaveBeta: async () => {
+      throw new Error("Demo mode doesn't send changes.");
+    },
     connectKeyboard: async () => {},
     allowUpdatePort: () => {
       earlyPick = new Promise((resolve) =>

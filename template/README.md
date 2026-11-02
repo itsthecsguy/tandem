@@ -12,8 +12,10 @@ Either way you get a repo of your own with fresh history. It can be private, whi
 ## What's here
 
 - `config/` Kinesis's config. `config/adv360.keymap` is your layout.
+- `tandem/kinesis-base` the Kinesis commit this repo last synced to. Tandem brings in Kinesis's changes after that one with a keyboard update.
 - `tandem/zmk-tandem/` Tandem's firmware module. It lets each half restart into update mode on request and report its build and layout. It also lets every paired computer reconnect over Bluetooth, not just the active profile's.
-- `.github/workflows/build.yml` Kinesis's build workflow, with the module added. Every push builds firmware for both halves.
+- `.github/workflows/build.yml` Kinesis's build workflow, with the module added, in the build image Tandem tested. Every push builds firmware for both halves.
+- `config/west.yml` pins ZMK and Zephyr to the commits Tandem tested, so a commit always builds the same firmware.
 - `bin/get_version.sh` and `settings-reset.uf2` from Kinesis. The workflow uses the script. Flashing the reset file to a half clears its saved settings, including Bluetooth pairings.
 
 This template is published from the `template/` folder of [itsthecsguy/tandem](https://github.com/itsthecsguy/tandem). Send changes there.

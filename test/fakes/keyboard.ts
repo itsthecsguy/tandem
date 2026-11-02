@@ -160,6 +160,8 @@ export class FakeHalf {
   mode: "app" | "update" = "app";
   keymap = "/ { keymap { compatible = \"zmk,keymap\"; }; };";
   restartsOnRequest = true;
+  /** The Tandem release the firmware reports, once firmware has release numbers. */
+  release: number | null = null;
   /** Ignore new firmware, to test a flash that doesn't take. */
   rejectsFirmware = false;
   /** Until then, the Tandem port ignores commands, like a half still starting up. */
@@ -182,7 +184,7 @@ export class FakeHalf {
   info() {
     const right = this.keyboard.right;
     const peripheral = this.side === "left" && this.protocol >= 3 ? { peripheral: right.linked && right.mode === "app" } : {};
-    return { tandem: this.protocol, role: this.side === "left" ? "central" : "peripheral", name: "Adv360 Pro", build: this.build, repo: "octocat/adv360", ...peripheral };
+    return { tandem: this.protocol, role: this.side === "left" ? "central" : "peripheral", name: "Adv360 Pro", build: this.build, repo: "octocat/adv360", ...(this.release ? { release: this.release } : {}), ...peripheral };
   }
 
   ports(): PortLike[] {

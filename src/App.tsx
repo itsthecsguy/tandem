@@ -7,11 +7,13 @@ import { MAX_LAYERS, addLayer, removeLayer, renameLayer } from "../shared/layers
 import type { AppState, BuildSettings, Keymap, Session } from "../shared/types";
 import { api, useLive } from "./api";
 import { KeyboardStatus, halfState } from "./components/HalfStatus";
+import { HistorySheet } from "./components/HistorySheet";
 import { KeyInspector, Overview } from "./components/Inspector";
 import { Keyboard } from "./components/Keyboard";
 import { LayerBar } from "./components/LayerBar";
 import { Onboarding, needsOnboarding } from "./onboarding/Onboarding";
 import { RepoMenu } from "./components/RepoMenu";
+import { WhatsNew } from "./components/WhatsNew";
 import { ThemeMenu } from "./components/ThemeMenu";
 import { UpdateSheet } from "./components/UpdateSheet";
 import { viewJob } from "./lib/job";
@@ -68,6 +70,7 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
   const [toast, setToast] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(() => import.meta.env.DEV && new URLSearchParams(location.search).get("demo") === "history");
   const live = useLive();
   const { devices, connected } = live;
   // Dev server demos (lib/demo.ts) open the sheet on whatever moment they show.
@@ -103,14 +106,15 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
   useEffect(() => {
     if (job?.running || job?.interrupted || (demo && job)) setSheetOpen(true);
   }, [job?.id, job?.running, job?.interrupted, demo]);
+  // Putting an older build back commits nothing, so unsaved edits stay.
   useEffect(() => {
-    if (view?.done) load();
-  }, [view?.done, load]);
-  // An update commits any newer Tandem, which takes its banner away.
-  const outdated = !!session.setup?.outdated;
+    if (view?.done && view.kind !== "rollback") load();
+  }, [view?.done, view?.kind, load]);
+  // An update commits any newer Tandem or Kinesis change, which takes its banner away.
+  const pending = !!session.setup?.outdated || !!session.kinesis;
   useEffect(() => {
-    if (outdated && job && !job.running) api.session().then(onSession, () => {});
-  }, [outdated, job?.id, job?.running, onSession]);
+    if (pending && job && !job.running) api.session().then(onSession, () => {});
+  }, [pending, job?.id, job?.running, onSession]);
 
   const activators = useMemo(() => (draft ? layerActivators(draft) : []), [draft]);
 
@@ -260,6 +264,7 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
           <RepoMenu
             repo={state.repo}
             login={session.login}
+            onHistory={() => setHistoryOpen(true)}
             onChangeRepo={async () => onSession(await api.disconnect())}
             onRestartSetup={async () => onSession(await api.restartOnboarding())}
             onSignOut={async () => onSession(await api.signOut())}
@@ -321,8 +326,18 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
       {session.setup?.outdated && (
         <div className="banner">
           <span>
-            <strong>A newer version of Tandem is ready for your repo.</strong> The next keyboard update commits it to your repo and
-            installs it, with no key presses.
+            {session.setup.held ? (
+              <>
+                <strong>You undid Tandem {session.setup.latest}, so updates leave it out.</strong> The next release goes back to updating by
+                itself.
+              </>
+            ) : (
+              <>
+                <strong>{session.setup.latest ? `Tandem ${session.setup.latest} is ready for your repo.` : "A newer version of Tandem is ready for your repo."}</strong>{" "}
+                The next keyboard update commits it to your repo and installs it, with no key presses.
+              </>
+            )}{" "}
+            <WhatsNew from={session.setup.version} />
           </span>
           <button
             type="button"
@@ -340,8 +355,32 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
               }
             }}
           >
-            {installing ? "Committing…" : "Commit now"}
+            {installing ? "Committing…" : session.setup.held ? "Install it anyway" : "Commit now"}
           </button>
+        </div>
+      )}
+      {session.kinesis && !session.kinesis.held && (
+        <div className="banner">
+          {session.kinesis.conflicts.length ? (
+            <span>
+              <strong>Kinesis changed files you changed too:</strong> {session.kinesis.conflicts.join(", ")}. Your updates still work, without Kinesis's
+              changes, until those files are merged by hand.{" "}
+              <a href={session.kinesis.compareUrl} target="_blank" rel="noreferrer">
+                See what Kinesis changed
+              </a>
+            </span>
+          ) : (
+            <span>
+              <strong>
+                Kinesis changed its config ({session.kinesis.commits.length} commit{session.kinesis.commits.length === 1 ? "" : "s"}), and Tandem has
+                tested it.
+              </strong>{" "}
+              The next keyboard update brings it in.{session.kinesis.kept.length > 0 && ` Your ${session.kinesis.kept.join(", ")} stays as you have it.`}{" "}
+              <a href={session.kinesis.compareUrl} target="_blank" rel="noreferrer">
+                See what changed
+              </a>
+            </span>
+          )}
         </div>
       )}
       {error && (
@@ -430,8 +469,35 @@ function Editor({ session, onSession }: { session: Session; onSession: (s: Sessi
           firstTime={firstTime}
           onAct={(a) => api.act(a).catch((e: Error) => setError(e.message))}
           onCancel={() => api.cancel()}
-          onClose={() => setSheetOpen(false)}
-          onRetry={update}
+          onClose={() => {
+            setSheetOpen(false);
+            // Not sooner: with Tandem out of the repo, the session goes back to
+            // onboarding, and the sheet still has the steps for clearing settings.
+            if (view.kind === "leaving") api.session().then(onSession, () => {});
+          }}
+          onRetry={view.kind === "leaving" ? () => api.leaveTandem().catch((e: Error) => setError(e.message)) : update}
+          onUndo={async (sha) => {
+            try {
+              onSession(await api.undoUpdate(sha));
+              await load();
+              await update();
+            } catch (e) {
+              setError((e as Error).message);
+            }
+          }}
+        />
+      )}
+
+      {historyOpen && (
+        <HistorySheet
+          session={session}
+          devices={devices}
+          running={running}
+          dirty={dirty}
+          onClose={() => setHistoryOpen(false)}
+          onSession={onSession}
+          onChanged={load}
+          onStarted={() => setHistoryOpen(false)}
         />
       )}
     </div>

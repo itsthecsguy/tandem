@@ -3,16 +3,19 @@ import { createRoot } from "react-dom/client";
 
 import { initApi } from "./api";
 import { App } from "./App";
+import { Changelog } from "./Changelog";
 import { Privacy } from "./Privacy";
 import "./styles.css";
 
 const root = createRoot(document.getElementById("root")!);
 
-// The privacy page needs no GitHub or keyboard, so it skips setting those up.
-if (location.pathname === "/privacy") {
+// These pages need no GitHub or keyboard, so they skip setting those up.
+const Page = { "/privacy": Privacy, "/changelog": Changelog }[location.pathname];
+
+if (Page) {
   root.render(
     <StrictMode>
-      <Privacy />
+      <Page />
     </StrictMode>,
   );
 } else {

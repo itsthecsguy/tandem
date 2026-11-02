@@ -101,7 +101,7 @@ async function verifyHalf(side: Side, build: BuildRecord, emit: Emit, signal: Ab
   emit({ type: "step", step: `flash-${side}`, state: "done", detail: `Running ${build.id}` });
 }
 
-async function flashHalf(side: Side, build: BuildRecord, emit: Emit, signal: AbortSignal, start: HalfStatus) {
+async function flashHalf(side: Side, build: BuildRecord, emit: Emit, signal: AbortSignal, start: HalfStatus, stock: boolean) {
   let half = start;
   if (half.mode === "app") {
     if (half.autoflash && half.port) {
@@ -122,10 +122,13 @@ async function flashHalf(side: Side, build: BuildRecord, emit: Emit, signal: Abo
     }
   }
   await copyFirmware(side, half, build[side], emit, signal);
-  await verifyHalf(side, build, emit, signal);
+  if (stock) emit({ type: "step", step: `flash-${side}`, state: "done", detail: "Firmware sent" });
+  else await verifyHalf(side, build, emit, signal);
 }
 
-export async function flashKeyboard(build: BuildRecord, emit: Emit, signal: AbortSignal): Promise<void> {
+/** With `stock`, the build has no Tandem in it, so nothing can ask the halves. */
+export async function flashKeyboard(build: BuildRecord, emit: Emit, signal: AbortSignal, options?: { stock?: boolean }): Promise<void> {
+  const stock = !!options?.stock;
   emit({ type: "step", step: "prepare", state: "active", detail: "Looking for both halves" });
 
   let devices = await scanDevices();
@@ -142,15 +145,16 @@ export async function flashKeyboard(build: BuildRecord, emit: Emit, signal: Abor
   const needsHands = SIDES.filter((s) => devices[s].mode === "app" && !devices[s].autoflash);
   const automatic = SIDES.filter((s) => devices[s].mode === "app" && devices[s].autoflash);
 
-  await Promise.all(waiting.map((side) => flashHalf(side, build, emit, signal, devices[side])));
+  await Promise.all(waiting.map((side) => flashHalf(side, build, emit, signal, devices[side], stock)));
 
   for (const side of needsHands) {
     const current = (await scanDevices())[side];
-    await flashHalf(side, build, emit, signal, current);
+    await flashHalf(side, build, emit, signal, current, stock);
   }
 
   const current = await scanDevices();
-  await Promise.all(automatic.map((side) => flashHalf(side, build, emit, signal, current[side])));
+  await Promise.all(automatic.map((side) => flashHalf(side, build, emit, signal, current[side], stock)));
 
-  emit({ type: "step", step: "verify", state: "done", detail: `Both halves run ${build.id}` });
+  if (stock) emit({ type: "step", step: "verify", state: "skipped", detail: "Kinesis's firmware can't report its build" });
+  else emit({ type: "step", step: "verify", state: "done", detail: `Both halves run ${build.id}` });
 }

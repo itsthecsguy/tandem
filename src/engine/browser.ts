@@ -1,9 +1,10 @@
 // Tandem running entirely in this tab: GitHub's API for the repo and builds,
 // and Web Serial for the keyboard where the browser has it.
 
-import type { ImportedLayout } from "../../shared/types";
+import type { ImportedLayout, JobEvent, JobSnapshot } from "../../shared/types";
 import { finishSignIn, startSignIn } from "./auth";
-import { cancelJob, currentJob, startUpdate } from "./jobs";
+import { keptBuilds } from "./builds";
+import { cancelJob, currentJob, startLeaving, startRollback, startUpdate } from "./jobs";
 import { type KeyboardAccess, noKeyboard } from "./keyboard";
 import { createHub } from "./live";
 import { createFromTemplate } from "./newrepo";
@@ -15,11 +16,15 @@ import {
   disconnectRepo,
   github,
   installTandem,
+  leaveBeta,
   listBranches,
   listRepos,
   saveKeymap,
   session,
   signOut,
+  startBeta,
+  undoUpdate,
+  updateHistory,
   useGhLogin,
 } from "./workspace";
 
@@ -45,6 +50,11 @@ export function browserEngine(keyboard: KeyboardAccess = noKeyboard()): Engine {
   };
 
   let imported: { layout: ImportedLayout; keymapText?: string } | null = null;
+
+  const listen = {
+    start: (snapshot: JobSnapshot) => hub.emit({ type: "job", job: snapshot }),
+    event: (event: JobEvent) => hub.emit({ type: "job-event", event }),
+  };
 
   return {
     caps: { engine: "browser", ...keyboard.caps },
@@ -112,11 +122,27 @@ export function browserEngine(keyboard: KeyboardAccess = noKeyboard()): Engine {
       return appState();
     },
     update: async (keymap) => {
-      const job = startUpdate(keymap, keyboard.flash, {
-        start: (snapshot) => hub.emit({ type: "job", job: snapshot }),
-        event: (event) => hub.emit({ type: "job-event", event }),
-      });
+      const job = startUpdate(keymap, keyboard.flash, listen);
       return { id: job.id };
+    },
+    history: async () => {
+      const [builds, updates] = await Promise.all([keptBuilds(), updateHistory()]);
+      return { builds, updates };
+    },
+    flashBuild: async (key) => ({ id: startRollback(key, keyboard.flash, listen).id }),
+    undoUpdate: async (sha) => {
+      await undoUpdate(sha);
+      return currentSession();
+    },
+    leaveTandem: async () => ({ id: startLeaving(keyboard.flash, listen).id }),
+    startBeta: async () => {
+      const kept = await startBeta();
+      return { session: await currentSession(), kept };
+    },
+    leaveBeta: async () => {
+      const { beta } = await currentSession();
+      if (beta) await leaveBeta(beta.from);
+      return currentSession();
     },
     cancel: async () => {
       cancelJob();

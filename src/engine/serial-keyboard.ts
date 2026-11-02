@@ -198,7 +198,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       const found = tandemPort(side);
       if (found) {
         const [, info] = found;
-        return { ...emptyHalf(side), mode: "app", autoflash: true, build: info.build, repo: info.repo || null, protocol: info.tandem, port: "web-serial" };
+        return { ...emptyHalf(side), mode: "app", autoflash: true, build: info.build, repo: info.repo || null, protocol: info.tandem, version: info.release ?? null, port: "web-serial" };
       }
       // Only the left half has a second port, for ZMK Studio.
       if (side === "left" && otherPorts().length) return { ...emptyHalf(side), mode: "app", otherPorts: otherPorts().map(() => "web-serial") };
@@ -206,7 +206,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       const left = side === "right" ? relayPort() : null;
       if (left && left[1].peripheral !== false) {
         const [, info] = left;
-        return { ...emptyHalf(side), mode: "app", autoflash: true, build: rightBuild ?? info.build, repo: info.repo || null, protocol: info.tandem, port: "left half" };
+        return { ...emptyHalf(side), mode: "app", autoflash: true, build: rightBuild ?? info.build, repo: info.repo || null, protocol: info.tandem, version: info.release ?? null, port: "left half" };
       }
       return emptyHalf(side);
     };
@@ -456,6 +456,8 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     ready: Method | null,
     /** Halves that ran Tandem firmware when the update started. */
     tandemAtStart: Side[],
+    /** The build has no Tandem in it, so the half won't come back to answer. */
+    stock: boolean,
   ): Promise<{ flashed: Side; checked: boolean; newPort: boolean }> {
     let step = `flash-${side}` as const;
     let found = ready ? null : tandemPort(side);
@@ -559,6 +561,11 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     // next half's.
     await waitForNoBootPort(timing.bootMs, signal);
 
+    if (stock && !viaLeft) {
+      emit({ type: "step", step, state: "done", detail: "Firmware sent" });
+      return { flashed: target, checked: false, newPort: false };
+    }
+
     if (viaLeft) {
       // The bootloader checked the image before starting it. Seeing the right
       // half reconnect to the left one says it's running.
@@ -649,7 +656,8 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     return sides.filter((s) => !pending.includes(s));
   }
 
-  const flash: Flash = async (build, emit, signal) => {
+  const flash: Flash = async (build, emit, signal, options) => {
+    const stock = !!options?.stock;
     emit({ type: "step", step: "prepare", state: "active", detail: "Looking for both halves" });
     const d = await refresh(true);
     const tandem = SIDES.filter((s) => d[s].autoflash);
@@ -692,7 +700,7 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
     for (let round = 0; todo.length; round++) {
       if (round >= 4) throw new Error(`The key combo kept putting the wrong half in update mode. Check which half you press it on, then update again.`);
       const side = todo[0];
-      const result = await flashHalf(side, build, emit, signal, side === waiting?.side ? waiting.method : null, tandem);
+      const result = await flashHalf(side, build, emit, signal, side === waiting?.side ? waiting.method : null, tandem, stock);
       waiting = null;
       checked[result.flashed] = result.checked;
       if (result.newPort) newPorts.add(result.flashed);
@@ -713,7 +721,8 @@ export function keyboardAccess(deps: Deps | null = browserDeps()): KeyboardAcces
       for (const side of fresh) checked[side] = back.includes(side);
     }
     const all = !!(checked.left && checked.right);
-    emit({ type: "step", step: "verify", state: all ? "done" : "skipped", detail: all ? `Both halves run ${build.id}` : "The browser couldn't ask every half" });
+    const unasked = stock ? "Kinesis's firmware can't report its build" : "The browser couldn't ask every half";
+    emit({ type: "step", step: "verify", state: all ? "done" : "skipped", detail: all ? `Both halves run ${build.id}` : unasked });
     // Show the right half's new build, which only the left half can vouch for.
     await refresh(true).catch(() => {});
     return all;
