@@ -1,0 +1,31 @@
+# Builds the config template's firmware when it changes, the way a user's repo
+# builds it, so a module that won't compile never gets as far as a release.
+on:
+  push:
+    paths:
+      - "template/**"
+      - "scripts/build-template.sh"
+      - ".github/workflows/firmware.yml"
+  workflow_dispatch:
+
+name: Firmware
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # The same image as shared/pins.json. A test checks they match.
+    container:
+      image: zmkfirmware/zmk-build-arm:stable@sha256:edb1c953438c6f720ddb79c3762f3972013b7fbbaf4fff3592fc869983e7afc5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            template/modules/
+            template/zephyr/
+            template/zmk/
+          key: firmware-${{ hashFiles('template/config/west.yml') }}
+      - run: scripts/build-template.sh

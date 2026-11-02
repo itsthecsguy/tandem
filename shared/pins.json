@@ -1,0 +1,7 @@
+{
+  "kinesis": { "repo": "KinesisCorporation/Adv360-Pro-ZMK", "branch": "V3.0", "sha": "97f5d7394d36f60754a483bf5551e16d996fe406" },
+  "zmk": { "repo": "refil/zmk", "branch": "adv360-z3.5-2", "sha": "d93499bb877f2711989e6cbbe1feed9e9a792ca3" },
+  "zephyr": { "repo": "zmkfirmware/zephyr", "branch": "v3.5.0+zmk-fixes", "sha": "dacab4875df72109b96cc8977547a0dc04875bcd" },
+  "image": { "name": "zmkfirmware/zmk-build-arm", "tag": "stable", "digest": "sha256:edb1c953438c6f720ddb79c3762f3972013b7fbbaf4fff3592fc869983e7afc5" },
+  "beta": { "name": "ZMK 4.1", "repo": "NorthIsUp/Adv360-Pro-ZMK", "branch": "zmk-4.1-hwmv2", "sha": "92f6613454bead1e3cb24793598a4458f7b09c1a", "base": "97f5d7394d36f60754a483bf5551e16d996fe406" }
+}

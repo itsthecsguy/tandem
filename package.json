@@ -17,7 +17,8 @@
     "build": "vite build",
     "helper": "vite build && npm --prefix helper start",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "release": "scripts/release.sh"
   },
   "dependencies": {
     "@zmkfirmware/zmk-studio-ts-client": "^0.0.18",
