@@ -15,5 +15,5 @@
     "noEmit": true,
     "types": ["node", "vite/client"]
   },
-  "include": ["src", "shared", "test", "worker", "vite.config.ts"]
+  "include": ["src", "shared", "test", "worker", "scripts", "vite.config.ts"]
 }

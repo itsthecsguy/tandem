@@ -3,7 +3,8 @@
 # reaches anyone. Keyboard updates commit whatever the site bundles into every
 # user's repo, so the site goes last:
 #
-#   1. The tests here, and CI on this commit, including the firmware build.
+#   1. The tests here, the same engine against the real GitHub, and CI on this
+#      commit, including the firmware builds.
 #   2. template/ goes to the config template repo.
 #   3. That repo's own firmware build has to pass, both variants.
 #   4. tandemkb.com deploys.
@@ -55,6 +56,9 @@ npm run --silent typecheck
 npm --prefix helper run --silent typecheck
 npm test --silent
 npm run --silent build
+
+say "Real GitHub"
+npm run --silent e2e
 
 say "CI on ${sha:0:7}"
 wait_for_runs "$site_repo" "$sha"

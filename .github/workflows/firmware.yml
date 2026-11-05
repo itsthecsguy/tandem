@@ -1,10 +1,13 @@
 # Builds the config template's firmware when it changes, the way a user's repo
 # builds it, so a module that won't compile never gets as far as a release.
+# Also builds the ZMK 4.1 trial the way Tandem makes a user's trial branch.
 on:
   push:
     paths:
       - "template/**"
+      - "shared/**"
       - "scripts/build-template.sh"
+      - "scripts/trial-config.ts"
       - ".github/workflows/firmware.yml"
   workflow_dispatch:
 
@@ -29,3 +32,32 @@ jobs:
             template/zmk/
           key: firmware-${{ hashFiles('template/config/west.yml') }}
       - run: scripts/build-template.sh
+
+  trial:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: pins
+        run: |
+          echo "repo=$(jq -r .beta.repo shared/pins.json)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(jq -r .beta.sha shared/pins.json)" >> "$GITHUB_OUTPUT"
+      # With history, for the merge from the commit the port started from.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.pins.outputs.repo }}
+          ref: ${{ steps.pins.outputs.sha }}
+          path: port
+          fetch-depth: 0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            trial/modules/
+            trial/zephyr/
+            trial/zmk/
+          key: firmware-trial-${{ hashFiles('port/config/west.yml') }}
+      - run: npm ci
+      - run: npx tsx scripts/trial-config.ts port trial
+      # In the image the trial's own workflow names, as a user's trial build would.
+      - run: |
+          image=$(sed -n 's/^ *image: *//p' trial/.github/workflows/build.yml | head -n 1)
+          docker run --rm -v "$PWD/trial":/w -v "$PWD/scripts":/scripts:ro "$image" bash /scripts/build-template.sh /w

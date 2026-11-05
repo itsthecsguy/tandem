@@ -135,10 +135,11 @@ The Worker only runs for `/api/*`: it trades codes for its own origin and callba
 Keyboard updates commit whatever the site bundles into every user's repo, so a release goes through a gate, `npm run release`. Push the commit first. The script stops at the first thing that fails:
 
 1. The tests, the type checks and a build of the site.
-2. CI on that commit, including the Firmware workflow, which builds the template's firmware the way a user's repo does.
-3. A check that a changed `template/` has a new number in `version.txt`.
-4. `scripts/publish-template.sh`, which commits `template/` to [itsthecsguy/tandem-config](https://github.com/itsthecsguy/tandem-config), and then that repo's own firmware build, both variants.
-5. `wrangler deploy`.
+2. `npm run e2e`, which runs Tandem's engine against the real GitHub with the GitHub CLI's login. It brings a repo on an older Kinesis config up to date, undoes that, leaves Tandem, makes the ZMK 4.1 trial branch, and syncs a fork with a merge commit. It keeps two throwaway repos, `tandem-e2e` and `tandem-e2e-fork`, makes them on its first run and deletes its branches after each run. Actions stay off in both, so nothing builds.
+3. CI on that commit, including the Firmware workflow. It builds the template's firmware the way a user's repo does, checks that both halves report the new release, and builds the ZMK 4.1 trial the way Tandem makes one.
+4. A check that a changed `template/` has a new number in `version.txt`.
+5. `scripts/publish-template.sh`, which commits `template/` to [itsthecsguy/tandem-config](https://github.com/itsthecsguy/tandem-config), and then that repo's own firmware build, both variants.
+6. `wrangler deploy`.
 
 To take something upstream moved, follow the steps in the issue the Upstream workflow opens: move the pin in `shared/pins.json`, update `template/` to match, flash it to a keyboard, and add a release to `version.txt` and `shared/changelog.ts`.
 
@@ -149,8 +150,8 @@ To take something upstream moved, follow the steps in the issue the Upstream wor
 - `worker/` the Cloudflare Worker that serves the site and finishes sign-in
 - `template/` the config template: Kinesis's config at V3.0 with the default layout, the build workflow with Tandem added, and `tandem/zmk-tandem/`, the firmware module
 - `helper/` the optional local helper
-- `test/` tests, with the fake GitHub and keyboard in `test/fakes/`
-- `scripts/` the release gate, the firmware check and the upstream watch
+- `test/` tests, with the fake GitHub and keyboard in `test/fakes/`, and `test/e2e.test.ts` against the real GitHub
+- `scripts/` the release gate, the firmware checks and the upstream watch
 
 ## Next
 

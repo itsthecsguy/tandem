@@ -17,6 +17,7 @@
     "build": "vite build",
     "helper": "vite build && npm --prefix helper start",
     "test": "vitest run",
+    "e2e": "TANDEM_E2E_TOKEN=$(gh auth token) vitest run test/e2e.test.ts",
     "typecheck": "tsc --noEmit -p .",
     "release": "scripts/release.sh"
   },
@@ -34,6 +35,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "vitest": "^5.0.5",

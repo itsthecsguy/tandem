@@ -8,6 +8,7 @@ set -euo pipefail
 
 cd "${1:-"$(dirname "$0")/../template"}"
 export GITHUB_WORKSPACE="$PWD"
+release=$(cat tandem/zmk-tandem/version.txt)
 
 bin/get_version.sh V3.0 0000000
 mkdir -p tandem
@@ -22,4 +23,11 @@ sed -n 's/^ *run: \(west build .*\)$/\1/p' .github/workflows/build.yml | while I
   rm -rf build
   echo "== $build"
   eval "$build" </dev/null
+  # Each half tells Tandem its release, which decides what an update offers.
+  elf=$(find build -name zmk.elf | head -n 1)
+  if ! grep -qaE "\"release\":${release}[^0-9]" "$elf"; then
+    echo "::error::$elf doesn't report release $release"
+    exit 1
+  fi
+  echo "Reports release $release"
 done
